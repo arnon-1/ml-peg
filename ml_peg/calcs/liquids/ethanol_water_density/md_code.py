@@ -10,7 +10,7 @@ from typing import Any
 
 from ase.io import Trajectory, read, write
 from ase.md import Langevin, MDLogger
-from ase.md.langevinbaoab import LangevinBAOAB
+from ase.md.nose_hoover_chain import IsotropicMTKNPT
 from ase.md.velocitydistribution import (
     MaxwellBoltzmannDistribution,
     Stationary,
@@ -154,12 +154,12 @@ def run_one_case(
     *,
     temperature: float = 298.15,
     p_bar: float = 1.0,
-    dt_fs: float = 0.5,
-    nvt_steps: int = 10_000,
-    npt_steps: int = 200_000,
+    dt_fs: float = 1.0,
+    nvt_steps: int = 50_000,
+    npt_steps: int = 1000_000,
     sample_every: int = 20,
-    log_every: int = 200,
-    log_trajectory_every: int = 400,
+    log_every: int = 250,
+    log_trajectory_every: int = 500,
     dummy_data=False,
     continue_running=False,
     workdir: Path,
@@ -218,7 +218,8 @@ def run_one_case(
     dt = dt_fs * fs
     t0 = time.time()
     ps = 1000 * fs
-    thermostat_tau = 0.5 * ps
+    thermostat_tau = 50 * ps
+    barostat_tau = 100 * ps
 
     target_samples = npt_steps // sample_every
 
@@ -284,22 +285,20 @@ def run_one_case(
             atoms,
             timestep=dt,
             temperature_K=temperature,
-            friction=1 / thermostat_tau,
+            friction=1 / (500 * fs),
         )
         attach_basic_logging(dyn, atoms, str(workdir / "md.log"), log_every, t0)
         with traj_logging(dyn, atoms, workdir, traj_every=log_trajectory_every):
             dyn.run(nvt_steps)
 
     # NPT
-    dyn = LangevinBAOAB(
+    dyn = IsotropicMTKNPT(
         atoms,
         timestep=dt,
         temperature_K=temperature,
-        externalstress=p_bar * bar,
-        T_tau=thermostat_tau,
-        P_tau=0.5 * ps,
-        hydrostatic=True,
-        rng=0,
+        pressure_au=p_bar * bar,  # TODO check units !!!
+        tdamp=thermostat_tau,
+        pdamp=barostat_tau,
     )
     dyn.nsteps = already_samples * sample_every  # seems public enough to me
 

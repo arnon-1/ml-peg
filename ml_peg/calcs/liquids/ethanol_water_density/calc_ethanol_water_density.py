@@ -144,8 +144,7 @@ def water_ethanol_density_curve_one_case(mlip: tuple[str, Any], case) -> None:
     model_out.mkdir(parents=True, exist_ok=True)
 
     calc = model.get_calculator()
-    # calc = model.add_d3_calculator(calc)
-    calc = add_shorter_d3_calculator(model, calc)  # TODO: don't forget to change back
+    calc = model.add_d3_calculator(calc)
 
     struct_path = DATA_PATH / case.filename
     if not struct_path.exists():
@@ -219,9 +218,9 @@ if __name__ == "__main__":  # TODO: delete this
         "data/mix_xe_0.00.extxyz",
         calc,
         nvt_steps=1000,
-        npt_steps=4000,
+        npt_steps=1000,
         log_every=50,
         workdir=Path("debug"),
-        continue_running=True,
+        continue_running=False,
     )
     print(rho)
