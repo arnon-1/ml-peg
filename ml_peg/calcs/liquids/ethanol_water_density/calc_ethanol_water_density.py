@@ -96,6 +96,7 @@ def _case_id(composition) -> str:
     return f"x={composition.x_ethanol:.2f}"
 
 
+@pytest.mark.very_slow
 @pytest.mark.parametrize("mlip", MODELS.items(), ids=list(MODELS.keys()))
 @pytest.mark.parametrize(
     "composition", COMPOSITIONS, ids=[_case_id(c) for c in COMPOSITIONS]
