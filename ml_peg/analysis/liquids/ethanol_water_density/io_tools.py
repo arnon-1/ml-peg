@@ -88,7 +88,7 @@ def _read_model_curve(model_name: str) -> tuple[list[float], list[float]]:
         if not rho_vals:
             raise ValueError(f"No density samples found in {ts_path}")
 
-        rho_mean = float(np.mean(rho_vals))
+        rho_mean = float(np.mean(rho_vals[len(rho_vals) // 2 :]))
         xs.append(x_ethanol)
         rhos.append(rho_mean)
 
