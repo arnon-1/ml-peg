@@ -13,49 +13,6 @@ RHO_WATER_PURE = 0.9982  # g/cm^3
 RHO_ETH_PURE = 0.7893  # g/cm^3
 
 
-def x_to_phi_ethanol(
-    x,
-    rho_mix,
-    *,
-    m_eth=M_ETOH,
-    m_water=M_WATER,
-    rho_eth=RHO_ETH_PURE,
-    rho_water=RHO_WATER_PURE,
-):  # TODO: double check formula
-    """
-    Convert ethanol mole fraction to ethanol volume fraction.
-
-    Parameters
-    ----------
-    x : array-like
-        Ethanol mole fraction.
-    rho_mix : array-like
-        Mixture density in g/cm^3 at each composition.
-    m_eth : float, optional
-        Ethanol molar mass in g/mol.
-    m_water : float, optional
-        Water molar mass in g/mol.
-    rho_eth : float, optional
-        Pure ethanol density in g/cm^3.
-    rho_water : float, optional
-        Pure water density in g/cm^3.
-
-    Returns
-    -------
-    numpy.ndarray
-        Ethanol volume fraction for each input composition.
-    """
-    x = np.asarray(x, dtype=float)
-    rho_mix = np.asarray(rho_mix, dtype=float)
-
-    m_eth = x * m_eth
-    m_wat = (1.0 - x) * m_water
-
-    v_mix = (m_eth + m_wat) / rho_mix  # cm^3 per "1 mol mixture basis"
-    v_eth = m_eth / rho_eth  # cm^3 (proxy)
-    return v_eth / v_mix
-
-
 def weight_to_mole_fraction(w):
     r"""
     Convert ethanol weight fraction to mole fraction.
@@ -116,74 +73,6 @@ def _interp_1d(x_src: np.ndarray, y_src: np.ndarray, x_tgt: np.ndarray) -> np.nd
     if np.any(x_tgt < x_src.min() - 1e-12) or np.any(x_tgt > x_src.max() + 1e-12):
         raise ValueError("Target x values fall outside reference interpolation range.")
     return np.interp(x_tgt, x_src, y_src)
-
-
-def _endpoints_at_0_1(
-    x: np.ndarray, y: np.ndarray, tol: float = 1e-8
-) -> tuple[float, float]:
-    """
-    Return y values at x=0 and x=1.
-
-    Parameters
-    ----------
-    x : numpy.ndarray
-        Composition grid.
-    y : numpy.ndarray
-        Property values.
-    tol : float, optional
-        Absolute tolerance used to identify endpoint compositions.
-
-    Returns
-    -------
-    tuple[float, float]
-        Pair ``(y0, y1)`` for x=0 and x=1.
-    """
-    i0 = np.where(np.isclose(x, 0.0, atol=tol))[0]
-    i1 = np.where(np.isclose(x, 1.0, atol=tol))[0]
-    if len(i0) != 1 or len(i1) != 1:
-        raise ValueError("Curve must include x=0 and x=1 to define linear baseline.")
-    return float(y[i0[0]]), float(y[i1[0]])
-
-
-def _linear_baseline(x: np.ndarray, y0: float, y1: float) -> np.ndarray:
-    """
-    Build the straight line connecting values at x=0 and x=1.
-
-    Parameters
-    ----------
-    x : numpy.ndarray
-        Composition grid.
-    y0 : float
-        Value at x=0.
-    y1 : float
-        Value at x=1.
-
-    Returns
-    -------
-    numpy.ndarray
-        Linear baseline evaluated at ``x``.
-    """
-    return y0 + x * (y1 - y0)
-
-
-def _excess_curve(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """
-    Compute excess curve relative to endpoint linear interpolation.
-
-    Parameters
-    ----------
-    x : numpy.ndarray
-        Composition grid.
-    y : numpy.ndarray
-        Property values.
-
-    Returns
-    -------
-    numpy.ndarray
-        Excess values ``y - y_linear``.
-    """
-    y0, y1 = _endpoints_at_0_1(x, y)
-    return y - _linear_baseline(x, y0, y1)
 
 
 def _excess_volume(x: np.ndarray, rhos: np.ndarray) -> np.ndarray:

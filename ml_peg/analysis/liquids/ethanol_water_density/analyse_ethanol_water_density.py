@@ -5,22 +5,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
 from ml_peg.analysis.liquids.ethanol_water_density._analysis import (
-    _excess_curve,
+    _excess_volume,
     _interp_1d,
     _peak_x_quadratic,
     _rmse,
-    x_to_phi_ethanol,
 )
 from ml_peg.analysis.liquids.ethanol_water_density.io_tools import (
     OUT_PATH,
-    _debug_plot_enabled,
     _read_model_curve,
-    _savefig,
     read_ref_curve,
 )
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
@@ -132,82 +128,6 @@ def densities_parity(ref_curve, model_curves) -> dict[str, list]:
 
 
 @pytest.fixture
-def debug_curve_plots(
-    ref_curve, model_curves
-) -> None:  # TODO should I remove or use a different format?
-    """
-    Generate optional debug plots for densities and excess properties.
-
-    Parameters
-    ----------
-    ref_curve : tuple[numpy.ndarray, numpy.ndarray]
-        Reference composition and density arrays.
-    model_curves : dict[str, tuple[numpy.ndarray, numpy.ndarray]]
-        Per-model composition and density arrays.
-
-    Returns
-    -------
-    None
-        Plots are written to disk when debug plotting is enabled.
-    """
-    if not _debug_plot_enabled():
-        return
-    print("plotting curves")
-
-    x_ref, rho_ref = ref_curve
-
-    for m, (x_m, rho_m) in model_curves.items():
-        rho_ref_m = _interp_1d(x_ref, rho_ref, x_m)
-
-        fig, ax = plt.subplots()
-        ax.plot(x_ref, rho_ref, label="ref (dense)")
-        ax.plot(x_m, rho_m, marker="o", label=f"{m} (model)")
-        ax.plot(x_m, rho_ref_m, marker="x", label="ref on model grid")
-        ax.set_title(f"Density curve: {m}")
-        ax.set_xlabel("x_ethanol")
-        ax.set_ylabel("rho / g cm$^{-3}$")
-        ax.legend()
-
-        print("saving a curve at:", OUT_PATH / "debug" / m / "density_curve.svg")
-
-        # excess density
-        _savefig(fig, OUT_PATH / "debug" / m / "density_curve.svg")
-        rho_ref_m = _interp_1d(x_ref, rho_ref, x_m)
-
-        fig, ax = plt.subplots()
-        ax.plot(x_ref, _excess_curve(x_ref, rho_ref), label="ref (dense)")
-        ax.plot(x_m, _excess_curve(x_m, rho_m), marker="o", label=f"{m} (model)")
-        ax.plot(
-            x_m, _excess_curve(x_m, rho_ref_m), marker="x", label="ref on model grid"
-        )
-        ax.set_title(f"Density curve: {m}")
-        ax.set_xlabel("x_ethanol")
-        ax.set_ylabel("rho / g cm$^{-3}$")
-        ax.legend()
-
-        print("saving a curve at:", OUT_PATH / "debug" / m / "excess_density_curve.svg")
-        _savefig(fig, OUT_PATH / "debug" / m / "excess_density_curve.svg")
-
-        # volume fraction plot
-        phi_ref = x_to_phi_ethanol(x_ref, rho_ref)
-        phi_m = x_to_phi_ethanol(x_m, rho_m)
-
-        fig, ax = plt.subplots()
-        ax.plot(phi_ref, rho_ref, label="ref (dense)")
-        ax.plot(phi_m, rho_m, marker="o", label=f"{m} (model)")
-        ax.plot(phi_m, rho_ref_m, marker="x", label="ref on model grid")
-
-        ax.set_title(f"Density curve (volume fraction): {m}")
-        ax.set_xlabel(r"$\phi_\mathrm{ethanol}$")
-        ax.set_ylabel("rho / g cm$^{-3}$")
-        ax.legend()
-
-        out_phi = OUT_PATH / "debug" / m / "density_curve_phi.svg"
-        print("saving a curve at:", out_phi)
-        _savefig(fig, out_phi)
-
-
-@pytest.fixture
 def rmse_density(ref_curve, model_curves) -> dict[str, float]:
     """
     Compute density RMSE versus interpolated reference values.
@@ -233,9 +153,9 @@ def rmse_density(ref_curve, model_curves) -> dict[str, float]:
 
 
 @pytest.fixture
-def rmse_excess_density(ref_curve, model_curves) -> dict[str, float]:
+def rmse_excess_volume(ref_curve, model_curves) -> dict[str, float]:
     """
-    Compute RMSE of excess density curves.
+    Compute RMSE of excess volume curves.
 
     Parameters
     ----------
@@ -255,8 +175,8 @@ def rmse_excess_density(ref_curve, model_curves) -> dict[str, float]:
     for m, (x_m, rho_m) in model_curves.items():
         rho_ref_m = _interp_1d(x_ref, rho_ref, x_m)
 
-        ex_ref = _excess_curve(x_m, rho_ref_m)
-        ex_m = _excess_curve(x_m, rho_m)
+        ex_ref = _excess_volume(x_m, rho_ref_m)
+        ex_m = _excess_volume(x_m, rho_m)
 
         out[m] = _rmse(ex_m, ex_ref)
 
@@ -266,7 +186,7 @@ def rmse_excess_density(ref_curve, model_curves) -> dict[str, float]:
 @pytest.fixture
 def peak_x_error(ref_curve, model_curves) -> dict[str, float]:
     """
-    Compute absolute error in composition of maximum excess density.
+    Compute absolute error in composition of minimum excess volume.
 
     Parameters
     ----------
@@ -281,13 +201,13 @@ def peak_x_error(ref_curve, model_curves) -> dict[str, float]:
         Absolute peak-position error keyed by model name.
     """
     x_ref, rho_ref = ref_curve
-    ex_ref_dense = _excess_curve(x_ref, rho_ref)
+    ex_ref_dense = _excess_volume(x_ref, rho_ref)
     x_peak_ref = _peak_x_quadratic(x_ref, ex_ref_dense)
     print("ref peak at:", x_peak_ref)
 
     out: dict[str, float] = {}
     for m, (x_m, rho_m) in model_curves.items():
-        ex_m = _excess_curve(x_m, rho_m)
+        ex_m = _excess_volume(x_m, rho_m)
         x_peak_m = _peak_x_quadratic(x_m, ex_m)
         out[m] = float(abs(x_peak_m - x_peak_ref))
 
@@ -307,9 +227,8 @@ def peak_x_error(ref_curve, model_curves) -> dict[str, float]:
         "Model": "Name of the model",
         "RMSE density": "RMSE between model and reference density"
         "at model compositions (g cm⁻³).",
-        "RMSE excess density": (
-            "RMSE after subtracting each curve’s linear baseline"
-            "between pure endpoints (g cm⁻³)."
+        "RMSE excess volume": (
+            "RMSE of the excess volumebetween pure endpoints (cm³ mol^-1)."
         ),
         "Peak x error": (
             "Absolute difference in mole-fraction location of maximum excess density."
@@ -318,7 +237,7 @@ def peak_x_error(ref_curve, model_curves) -> dict[str, float]:
 )
 def metrics(
     rmse_density: dict[str, float],
-    rmse_excess_density: dict[str, float],
+    rmse_excess_volume: dict[str, float],
     peak_x_error: dict[str, float],
 ) -> dict[str, dict]:
     """
@@ -328,8 +247,8 @@ def metrics(
     ----------
     rmse_density : dict[str, float]
         Density RMSE values.
-    rmse_excess_density : dict[str, float]
-        Excess-density RMSE values.
+    rmse_excess_volume : dict[str, float]
+        Excess-volume RMSE values.
     peak_x_error : dict[str, float]
         Peak-position errors.
 
@@ -340,13 +259,13 @@ def metrics(
     """
     return {
         "RMSE density": rmse_density,
-        "RMSE excess density": rmse_excess_density,
+        "RMSE excess volume": rmse_excess_volume,
         "Peak x error": peak_x_error,
     }
 
 
 def test_ethanol_water_density(
-    metrics: dict[str, dict], densities_parity: dict[str, list], debug_curve_plots
+    metrics: dict[str, dict], densities_parity: dict[str, list]
 ) -> None:
     """
     Execute density analysis fixtures and emit debug output.
@@ -357,8 +276,6 @@ def test_ethanol_water_density(
         Metrics table payload.
     densities_parity : dict[str, list]
         Parity plot payload.
-    debug_curve_plots : None
-        Side-effect fixture for debug plotting.
 
     Returns
     -------
