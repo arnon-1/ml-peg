@@ -186,6 +186,27 @@ def _excess_curve(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return y - _linear_baseline(x, y0, y1)
 
 
+def _excess_volume(x: np.ndarray, rhos: np.ndarray) -> np.ndarray:
+    """
+    Compute excess volume given molar fraction and density respectively.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Composition grid (mol fraction).
+    rhos : numpy.ndarray
+        Density.
+
+    Returns
+    -------
+    numpy.ndarray
+        Excess values ``y - y_linear``.
+    """
+    return (x * M_ETOH + (1 - x) * M_WATER) / rhos - (
+        x * M_ETOH / rhos[-1] + (1 - x) * M_WATER / rhos[0]
+    )
+
+
 def _peak_x_quadratic(x: np.ndarray, y: np.ndarray) -> float:
     """
     Estimate x position of the minimum by local quadratic fitting.
