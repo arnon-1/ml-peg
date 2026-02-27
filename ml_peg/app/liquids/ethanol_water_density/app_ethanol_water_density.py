@@ -19,7 +19,7 @@ from ml_peg.app.utils.load import read_plot
 CATEGORY = "liquids"
 BENCHMARK_NAME = "ethanol_water_density"
 
-DOCS_URL = "https://ddmms.github.io/ml-peg/user_guide/benchmarks/"
+DOCS_URL = "https://ddmms.github.io/ml-peg/user_guide/benchmarks/liquids.html#ethanol-water-density-curves"
 
 DATA_PATH = APP_ROOT / "data" / CATEGORY / BENCHMARK_NAME
 
@@ -33,14 +33,11 @@ class EthanolWaterDecompositionCurvesApp(BaseApp):
             DATA_PATH / "density_parity.json", id=f"{BENCHMARK_NAME}-figure"
         )
 
-        # When the user clicks a metric column in the table, show the parity plot.
         plot_from_table_column(
             table_id=self.table_id,
             plot_id=f"{BENCHMARK_NAME}-figure-placeholder",
             column_to_plot={
-                "RMSE density": parity,
-                "RMSE excess density": parity,
-                "Peak x error": parity,
+                "density": parity,
             },
         )
 
@@ -58,8 +55,8 @@ def get_app() -> EthanolWaterDecompositionCurvesApp:
         name=BENCHMARK_NAME,
         description=(
             "Ethanol–water mixture density at 293.15 K. Metrics include density RMSE, "
-            "excess-density RMSE (baseline-subtracted), and error in the mole-fraction "
-            "location of the maximum excess density."
+            "excess-volume RMSE, and error in the mole-fraction"
+            "location of the maximum excess volume."
         ),
         docs_url=DOCS_URL,
         table_path=DATA_PATH / "density_metrics_table.json",

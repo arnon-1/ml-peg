@@ -76,16 +76,31 @@ def model_curves() -> dict[str, tuple[np.ndarray, np.ndarray]]:
     return curves
 
 
+def labels() -> list:
+    """
+    Get list of calculated concentrations.
+
+    Returns
+    -------
+    list
+        List of all calculated concentrations.
+    """
+    for model_name in MODELS:
+        labels_list, _ = _read_model_curve(model_name)
+        break
+    return labels_list
+
+
 @pytest.fixture
 @plot_parity(
     filename=OUT_PATH / "density_parity.json",
     title="Ethanol–water density (293.15 K)",
     x_label="Reference density / g cm⁻³",
     y_label="Predicted density / g cm⁻³",
-    # hoverdata={
-    #    "x_ethanol": [],  # filled in fixture
-    # },
-)  # TODO: read docs!!! doesn't seem to work yet.
+    hoverdata={
+        "Labels": labels(),
+    },
+)
 def densities_parity(ref_curve, model_curves) -> dict[str, list]:
     """
     Build parity-plot payload for model and reference densities.
@@ -291,4 +306,5 @@ def test_ethanol_water_density(
             for key0, value0 in metrics.items()
         }
     )
+    print(densities_parity)
     return
