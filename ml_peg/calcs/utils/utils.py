@@ -10,6 +10,7 @@ import zipfile
 
 import requests
 
+from ml_peg.calcs.utils.completion import record_data_file
 from ml_peg.data.data import download
 
 # Local cache directory
@@ -54,6 +55,7 @@ def download_s3_data(
         print(f"[cache] Found cached file: {local_path.name}")
 
     # Extract contents if necessary and return path
+    record_data_file(local_path)
     return extract_zip(local_path)
 
 
@@ -95,6 +97,7 @@ def download_github_data(filename: str, github_uri: str, force: bool = False) ->
         print(f"[cache] Found cached file: {local_path.name}")
 
     # Extract contents if necessary and return path
+    record_data_file(local_path)
     return extract_zip(local_path)
 
 
