@@ -74,6 +74,12 @@ CALCS=${CALCS:-ml_peg/calcs/*/*/calc*}
 # at 0: a single slow test can outlast the walltime and, with no completion
 # marker written, would rerun from scratch every resubmission.
 RUN_SLOW=${RUN_SLOW:-0}
+# Evaluate with torch.compile (adds compile_mode: default to every model's
+# kwargs). Each test compiles its own calculator; the inductor cache on /ptmp
+# amortises this across tests and tasks. CAUTION: compile has been seen to
+# produce silently WRONG energies for these models on some installations --
+# only enable after `check_model.py --compile` passes on this machine.
+COMPILE=${COMPILE:-0}
 
 mkdir -p "$RESULTS_BASE/logs" "$(dirname "$MODELS_YML")" "$LOCK_DIR"
 
@@ -87,6 +93,15 @@ cd "$ML_PEG_REPO"
 
 export OMP_NUM_THREADS=1
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
+
+if [[ "$COMPILE" == "1" ]]; then
+    # Inductor needs a C++20-capable compiler; the node default g++ is too old
+    module load gcc/13
+    export CXX="$(command -v g++)" CC="$(command -v gcc)"
+    export TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-/ptmp/$USER/torchinductor_cache}
+    export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-$TORCHINDUCTOR_CACHE_DIR/triton}
+    mkdir -p "$TRITON_CACHE_DIR"
+fi
 
 # Cross-job locking (see mlpeg_job_lock.py in this directory)
 export MLPEG_LOCK_DIR="$LOCK_DIR"
@@ -102,13 +117,14 @@ python "$ML_PEG_REPO/scripts/strip_distillation_heads.py" "$MODELS_DIR"
 
 # --- 1) Regenerate the models YAML from the current contents of $MODELS_DIR ---
 # Entry style copied from the test*-omat entries in ml_peg/models/models.yml.
-python - "$MODELS_DIR" "$MODELS_YML" "$HEAD" <<'EOF'
+python - "$MODELS_DIR" "$MODELS_YML" "$HEAD" "$COMPILE" <<'EOF'
 import os
 import sys
 import time
 from pathlib import Path
 
 models_dir, out_path, head = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+compile_mode = '    compile_mode: "default"\n' if sys.argv[4] == "1" else ""
 now = time.time()
 
 entries = []
@@ -129,7 +145,7 @@ for model in sorted(models_dir.glob("*_str.model")):
         "  level_of_theory: PBE\n"
         "  kwargs:\n"
         f'    model: "{model}"\n'
-        f'    head: {head}\n'
+        f"    head: {head}\n" + compile_mode
     )
     print(f"[generate] {name} -> {model}")
 

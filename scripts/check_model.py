@@ -74,7 +74,7 @@ def probe_missing(path: Path, max_stubs: int = 10) -> list[str]:
             delattr(module, name)
 
 
-def run_inference(path: Path, head: str) -> str:
+def run_inference(path: Path, head: str, device: str = "cpu", **kwargs) -> float:
     """
     Load a checkpoint the way the benchmark job does and compute water.
 
@@ -84,23 +84,30 @@ def run_inference(path: Path, head: str) -> str:
         Checkpoint file to evaluate.
     head
         Model head to use.
+    device
+        Device to evaluate on.
+    **kwargs
+        Extra keyword arguments for ``mace_mp``, e.g. ``compile_mode``.
 
     Returns
     -------
-    str
-        Summary of the computed energy and force shape.
+    float
+        Potential energy of a water molecule in eV.
     """
     from ase import Atoms
     from mace.calculators import mace_mp
 
-    calc = mace_mp(model=str(path), head=head, device="cpu", default_dtype="float64")
+    calc = mace_mp(
+        model=str(path), head=head, device=device, default_dtype="float64", **kwargs
+    )
     water = Atoms("H2O", positions=[[0, 0, 0], [0.76, 0.59, 0], [-0.76, 0.59, 0]])
     water.calc = calc
     energy = water.get_potential_energy()
-    return f"E(H2O) = {energy:.6f} eV, forces {water.get_forces().shape}"
+    assert water.get_forces().shape == (3, 3)
+    return energy
 
 
-def check(path: Path, head: str) -> bool:
+def check(path: Path, head: str, compile_check: bool = False) -> bool:
     """
     Check one checkpoint and print a verdict.
 
@@ -110,6 +117,11 @@ def check(path: Path, head: str) -> bool:
         Checkpoint file to check.
     head
         Model head to use for the inference test.
+    compile_check
+        Also evaluate with ``compile_mode="default"`` (on GPU if available)
+        and require the energy to match the eager result. torch.compile has
+        been seen to produce silently wrong energies for these models on some
+        installations -- do not submit with COMPILE=1 unless this passes.
 
     Returns
     -------
@@ -143,11 +155,31 @@ def check(path: Path, head: str) -> bool:
         return False
 
     try:
-        print(f"  inference (head={head}): {run_inference(target, head)}")
+        energy = run_inference(target, head)
+        print(f"  inference (head={head}): E(H2O) = {energy:.6f} eV, forces ok")
     except Exception as err:
         print(f"  inference FAILED ({type(err).__name__}: {err})")
         print("  VERDICT: NOT EVALUABLE (loads, but inference fails)")
         return False
+
+    if compile_check:
+        import torch
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        try:
+            compiled = run_inference(
+                target, head, device=device, compile_mode="default"
+            )
+        except Exception as err:
+            print(f"  compiled inference FAILED ({type(err).__name__}: {err})")
+            print("  VERDICT: eager OK, but do NOT submit with COMPILE=1")
+            return False
+        diff = abs(compiled - energy)
+        print(f"  compiled ({device}): E(H2O) = {compiled:.6f} eV, |diff| = {diff:.2e}")
+        if diff > 1e-5:
+            print("  VERDICT: COMPILED ENERGIES WRONG -- do NOT submit with COMPILE=1")
+            return False
+
     print("  VERDICT: OK")
     return True
 
@@ -157,12 +189,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("models", nargs="+", type=Path, help="checkpoint files")
     parser.add_argument("--head", default="omat_pbe", help="model head to test")
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="also verify torch.compile gives the same energies as eager",
+    )
     args = parser.parse_args()
 
     import mace
 
     print(f"mace {mace.__version__} from {Path(mace.__file__).parent}")
-    results = [check(path, args.head) for path in args.models]
+    results = [check(path, args.head, args.compile) for path in args.models]
     print(f"\n{sum(results)}/{len(results)} model(s) evaluable")
     sys.exit(0 if all(results) else 1)
 
