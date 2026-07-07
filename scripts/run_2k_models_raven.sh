@@ -20,7 +20,19 @@
 #      mid-test.
 #   3) If RESUBMIT=1 (default) it resubmits itself with --begin=now+$RESUBMIT_DELAY.
 #      --dependency=singleton (keyed on the job name) guarantees at most one
-#      instance runs at a time. Stop the loop with RESUBMIT=0 or scancel -n mlpeg_2k.
+#      instance runs PER JOB NAME. Stop a stream with RESUBMIT=0 or
+#      scancel -n <job name>.
+#
+# MULTIPLE INDEPENDENT JOBS: launch extra streams under different job names,
+# e.g.  sbatch -J mlpeg_2k_b scripts/run_2k_models_raven.sh
+#       sbatch -J mlpeg_2k_c scripts/run_2k_models_raven.sh
+# Each stream keeps its own singleton resubmission chain (the name is
+# inherited on resubmit). The streams share the work through lock files in
+# $LOCK_DIR (see mlpeg_job_lock.py): a job atomically claims each test before
+# running it and skips tests another live job has claimed, so no (model,
+# benchmark) pair is computed twice. Locks are released when the test ends;
+# locks from jobs killed mid-test go stale after MLPEG_LOCK_STALE_HOURS
+# (default 25 h) and are then reclaimed.
 #
 # PREREQUISITES (batch jobs have NO internet):
 #   - Benchmark data must be cached in ~/.cache/ml_peg first. Prefetch on a
@@ -53,6 +65,7 @@ ML_PEG_REPO=${ML_PEG_REPO:-~/mace/ml-peg}
 MODELS_DIR=${MODELS_DIR:-/ptmp/ademo/isambard/arndm/models/2k}
 RESULTS_BASE=${RESULTS_BASE:-/ptmp/ademo/isambard/arndm/results}
 MODELS_YML=${MODELS_YML:-$RESULTS_BASE/mlpeg/models_2k.yml}
+LOCK_DIR=${LOCK_DIR:-$RESULTS_BASE/mlpeg/locks}
 HEAD=${HEAD:-omat_pbe}
 # Include slow-marked benchmarks (phonons, RDB7, NEBs, diatomics, ...). Leave
 # at 0: a single slow test can outlast the walltime and, with no completion
@@ -64,7 +77,7 @@ RESUBMIT=${RESUBMIT:-1}
 RESUBMIT_DELAY=${RESUBMIT_DELAY:-1hour}
 SCRIPT_PATH=${SCRIPT_PATH:-$ML_PEG_REPO/scripts/run_2k_models_raven.sh}
 
-mkdir -p "$RESULTS_BASE/logs" "$(dirname "$MODELS_YML")"
+mkdir -p "$RESULTS_BASE/logs" "$(dirname "$MODELS_YML")" "$LOCK_DIR"
 
 # --- Environment ---
 if [[ -f "$ML_PEG_REPO/activate_env.sh" ]]; then
@@ -77,6 +90,10 @@ cd "$ML_PEG_REPO"
 export OMP_NUM_THREADS=1
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 
+# Cross-job locking (see mlpeg_job_lock.py in this directory)
+export MLPEG_LOCK_DIR="$LOCK_DIR"
+export PYTHONPATH="$ML_PEG_REPO/scripts${PYTHONPATH:+:$PYTHONPATH}"
+
 echo "$(date): ml-peg 2k-model sweep on $(hostname)"
 echo "Models dir: $MODELS_DIR"
 echo "Models YAML: $MODELS_YML"
@@ -85,6 +102,7 @@ echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || ec
 # --- 1) Regenerate the models YAML from the current contents of $MODELS_DIR ---
 # Entry style copied from the test*-omat entries in ml_peg/models/models.yml.
 python - "$MODELS_DIR" "$MODELS_YML" "$HEAD" <<'EOF'
+import os
 import sys
 import time
 from pathlib import Path
@@ -115,7 +133,10 @@ for model in sorted(models_dir.glob("*.model")):
 if not entries:
     sys.exit(f"No usable .model files found in {models_dir}")
 
-out_path.write_text("\n".join(entries), encoding="utf8")
+# Write atomically: concurrent job streams regenerate the same file
+tmp_path = out_path.with_suffix(f".tmp.{os.getpid()}")
+tmp_path.write_text("\n".join(entries), encoding="utf8")
+os.replace(tmp_path, out_path)
 print(f"[generate] Wrote {len(entries)} models to {out_path}")
 EOF
 
@@ -128,13 +149,14 @@ if [[ "$RUN_SLOW" == "1" ]]; then SLOW_FLAG="--run-slow"; fi
 
 pytest_status=0
 srun python -m pytest -v ml_peg/calcs/*/*/calc* -s $SLOW_FLAG \
-    --models-file "$MODELS_YML" || pytest_status=$?
+    -p mlpeg_job_lock --models-file "$MODELS_YML" || pytest_status=$?
 echo "$(date): pytest finished with exit status $pytest_status"
 
 # --- 3) Resubmit to pick up models that arrive later ---
 if [[ "$RESUBMIT" == "1" ]]; then
+    # Keep the job name so each stream stays its own singleton chain
     echo "Resubmitting (begin in $RESUBMIT_DELAY): $SCRIPT_PATH"
-    sbatch --begin="now+$RESUBMIT_DELAY" "$SCRIPT_PATH"
+    sbatch -J "${SLURM_JOB_NAME:-mlpeg_2k}" --begin="now+$RESUBMIT_DELAY" "$SCRIPT_PATH"
 else
     echo "RESUBMIT=0 -- not resubmitting."
 fi
