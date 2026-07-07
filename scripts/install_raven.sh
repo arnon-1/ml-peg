@@ -2,10 +2,14 @@
 # Set up ml-peg on MPCDF Raven, after cloning this repo branch:
 #   bash scripts/install_raven.sh
 #
-# Creates .venv in the repo root and installs ml-peg (with the D3 extra the
-# molecular benchmarks need) plus the distillation MACE fork (editable, from
-# $MACE_FORK) in place of stock mace-torch, so checkpoints pickling fork
-# classes (DistillationHead, rolled-dot blocks, ...) load natively.
+# Creates .venv in the repo root with uv (as the README recommends, pinned by
+# uv.lock) with the D3 extra the molecular benchmarks need, then installs the
+# distillation MACE fork (editable, from $MACE_FORK) in place of stock
+# mace-torch, so checkpoints pickling fork classes (DistillationHead,
+# rolled-dot blocks, ...) load natively, plus cuequivariance CUDA 13 kernels.
+#
+# NOTE: a later plain `uv sync` would PRUNE the fork and cuequivariance again
+# (sync is exact) -- rerun this script instead after pulling changes.
 #
 # Also writes activate_env.sh in the repo root -- the same module + venv +
 # cache setup as MACE_clone's -- which run_2k_models_raven.sh sources
@@ -24,16 +28,23 @@ fi
 module purge
 ml cuda/13.2 python-waterboa/2025.06
 
-echo "=== Creating venv at $ML_PEG_REPO/.venv (python: $(python3 --version))"
-python3 -m venv "$ML_PEG_REPO/.venv"
-source "$ML_PEG_REPO/.venv/bin/activate"
-pip install --upgrade pip
+if ! command -v uv >/dev/null; then
+    echo "=== Installing uv (user site)"
+    python3 -m pip install --user uv
+    export PATH="$HOME/.local/bin:$PATH"
+fi
 
-echo "=== Installing ml-peg (with D3 support)"
-pip install -e "$ML_PEG_REPO[d3]"
+cd "$ML_PEG_REPO"
+
+echo "=== Creating .venv from uv.lock (python: $(python3 --version))"
+uv sync --extra d3 --python "$(command -v python3)"
+source "$ML_PEG_REPO/.venv/bin/activate"
 
 echo "=== Installing the MACE fork from $MACE_FORK (replaces stock mace-torch)"
-pip install -e "$MACE_FORK"
+uv pip install -e "$MACE_FORK"
+
+echo "=== Installing cuequivariance (CUDA 13 kernels)"
+uv pip install cuequivariance-torch cuequivariance-ops-torch-cu13
 
 echo "=== Writing $ML_PEG_REPO/activate_env.sh"
 cat > "$ML_PEG_REPO/activate_env.sh" <<EOF
@@ -59,6 +70,11 @@ print(f"cuda available: {torch.cuda.is_available()} (false is fine on login node
 import mace.modules.blocks as blocks
 fork = [c for c in ("DistillationHead", "ProductSequential") if hasattr(blocks, c)]
 print(f"fork classes present: {fork or 'NONE -- fork install failed?'}")
+try:
+    import cuequivariance_torch  # noqa: F401
+    print("cuequivariance-torch ok")
+except ImportError as err:
+    print(f"cuequivariance-torch NOT importable: {err}")
 EOF
 
 echo
