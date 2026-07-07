@@ -61,8 +61,13 @@
 set -euo pipefail
 
 # --- Parameters ---
-# Override by EXPORTING before sbatch (or sbatch --export=ALL,VAR=...);
-# a plain VAR=x prefix on the sbatch command is not forwarded to the job.
+# Override by passing VAR=value as script arguments, e.g.
+#   sbatch --array=0 scripts/run_2k_models_raven.sh CALCS="ml_peg/calcs/molecular_reactions/BH2O_36/calc_*.py"
+# Script arguments are always forwarded by sbatch, unlike environment
+# variables, which the site's Slurm policy may strip from the job.
+for arg in "$@"; do
+    if [[ "$arg" == *=* ]]; then export "${arg?}"; fi
+done
 # Defaults to the directory sbatch was run from, i.e. submit from the repo root
 ML_PEG_REPO=${ML_PEG_REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
 MODELS_DIR=${MODELS_DIR:-/ptmp/ademo/isambard/arndm/models/2k}
@@ -113,6 +118,7 @@ export PYTHONPATH="$ML_PEG_REPO/scripts${PYTHONPATH:+:$PYTHONPATH}"
 echo "$(date): ml-peg 2k-model sweep, array task ${SLURM_ARRAY_TASK_ID:-?} on $(hostname)"
 echo "Models dir: $MODELS_DIR"
 echo "Models YAML: $MODELS_YML"
+echo "Settings: RUN_SLOW=$RUN_SLOW COMPILE=$COMPILE HEAD=$HEAD CALCS=$CALCS"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'nvidia-smi not available')"
 
 # --- 0) Strip distillation heads (writes <name>_str.model siblings) ---
