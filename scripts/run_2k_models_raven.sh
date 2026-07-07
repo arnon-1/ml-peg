@@ -15,24 +15,19 @@
 #      only new models (or new/changed benchmarks) actually compute anything.
 #      Benchmarks marked slow/very_slow are EXCLUDED (RUN_SLOW=0 default): a
 #      single test outlasting the walltime never writes its completion marker,
-#      so each resubmission would restart it and the loop would spin on that
-#      one test forever. Completion is only tracked per (model, test), not
-#      mid-test.
-#   3) If RESUBMIT=1 (default) it resubmits itself with --begin=now+$RESUBMIT_DELAY.
-#      --dependency=singleton (keyed on the job name) guarantees at most one
-#      instance runs PER JOB NAME. Stop a stream with RESUBMIT=0 or
-#      scancel -n <job name>.
-#
-# MULTIPLE INDEPENDENT JOBS: launch extra streams under different job names,
-# e.g.  sbatch -J mlpeg_2k_b scripts/run_2k_models_raven.sh
-#       sbatch -J mlpeg_2k_c scripts/run_2k_models_raven.sh
-# Each stream keeps its own singleton resubmission chain (the name is
-# inherited on resubmit). The streams share the work through lock files in
-# $LOCK_DIR (see mlpeg_job_lock.py): a job atomically claims each test before
-# running it and skips tests another live job has claimed, so no (model,
-# benchmark) pair is computed twice. Locks are released when the test ends;
-# locks from jobs killed mid-test go stale after MLPEG_LOCK_STALE_HOURS
-# (default 25 h) and are then reclaimed.
+#      so every later task would restart it from scratch. Completion is only
+#      tracked per (model, test), not mid-test.
+#   3) It runs as a JOB ARRAY (default 6 tasks, max 2 running at once). Each
+#      array task is an independent sweep; the tasks share the work through
+#      lock files in $LOCK_DIR (see mlpeg_job_lock.py): a task atomically
+#      claims each test before running it and skips tests another live task
+#      has claimed, so no (model, benchmark) pair is computed twice. Locks are
+#      released when the test ends; locks from tasks killed mid-test go stale
+#      after MLPEG_LOCK_STALE_HOURS (default 25 h) and are then reclaimed.
+#      Later tasks in the array rescan $MODELS_DIR when they start, so models
+#      arriving while the array works through its queue are picked up; once
+#      the array is exhausted, submit it again for newer models. Override the
+#      shape at submit time, e.g.:  sbatch --array=0-9%3 <this script>
 #
 # PREREQUISITES (batch jobs have NO internet):
 #   - Benchmark data must be cached in ~/.cache/ml_peg first. Prefetch on a
@@ -42,11 +37,11 @@
 #       scp -J ademo@gate.mpcdf.mpg.de models/2k/*.model \
 #           ademo@raven.mpcdf.mpg.de:/ptmp/ademo/isambard/arndm/models/2k/
 #
-#SBATCH -o /ptmp/ademo/isambard/arndm/results/logs/mlpeg_2k_%j.out
-#SBATCH -e /ptmp/ademo/isambard/arndm/results/logs/mlpeg_2k_%j.err
+#SBATCH -o /ptmp/ademo/isambard/arndm/results/logs/mlpeg_2k_%A_%a.out
+#SBATCH -e /ptmp/ademo/isambard/arndm/results/logs/mlpeg_2k_%A_%a.err
 #SBATCH -D ./
 #SBATCH -J mlpeg_2k
-#SBATCH --dependency=singleton
+#SBATCH --array=0-5%2
 #
 #SBATCH --ntasks=1
 #SBATCH --constraint="gpu"
@@ -71,11 +66,6 @@ HEAD=${HEAD:-omat_pbe}
 # at 0: a single slow test can outlast the walltime and, with no completion
 # marker written, would rerun from scratch every resubmission.
 RUN_SLOW=${RUN_SLOW:-0}
-# Self-resubmission: keep polling $MODELS_DIR for new models. The singleton
-# dependency plus the completion markers make this safe to leave on.
-RESUBMIT=${RESUBMIT:-1}
-RESUBMIT_DELAY=${RESUBMIT_DELAY:-1hour}
-SCRIPT_PATH=${SCRIPT_PATH:-$ML_PEG_REPO/scripts/run_2k_models_raven.sh}
 
 mkdir -p "$RESULTS_BASE/logs" "$(dirname "$MODELS_YML")" "$LOCK_DIR"
 
@@ -94,7 +84,7 @@ export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export MLPEG_LOCK_DIR="$LOCK_DIR"
 export PYTHONPATH="$ML_PEG_REPO/scripts${PYTHONPATH:+:$PYTHONPATH}"
 
-echo "$(date): ml-peg 2k-model sweep on $(hostname)"
+echo "$(date): ml-peg 2k-model sweep, array task ${SLURM_ARRAY_TASK_ID:-?} on $(hostname)"
 echo "Models dir: $MODELS_DIR"
 echo "Models YAML: $MODELS_YML"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'nvidia-smi not available')"
@@ -142,8 +132,9 @@ EOF
 
 # --- 2) Run all benchmark calculations for models not yet completed ---
 # Completion markers make this a no-op for (model, benchmark) pairs that
-# already ran with identical inputs; a non-zero exit (some benchmarks failing
-# for some models) must not kill the resubmission step.
+# already ran with identical inputs. Capture pytest's exit status: some
+# benchmarks failing for some models is expected and should not abort the
+# task under set -e.
 SLOW_FLAG=""
 if [[ "$RUN_SLOW" == "1" ]]; then SLOW_FLAG="--run-slow"; fi
 
@@ -151,14 +142,4 @@ pytest_status=0
 srun python -m pytest -v ml_peg/calcs/*/*/calc* -s $SLOW_FLAG \
     -p mlpeg_job_lock --models-file "$MODELS_YML" || pytest_status=$?
 echo "$(date): pytest finished with exit status $pytest_status"
-
-# --- 3) Resubmit to pick up models that arrive later ---
-if [[ "$RESUBMIT" == "1" ]]; then
-    # Keep the job name so each stream stays its own singleton chain
-    echo "Resubmitting (begin in $RESUBMIT_DELAY): $SCRIPT_PATH"
-    sbatch -J "${SLURM_JOB_NAME:-mlpeg_2k}" --begin="now+$RESUBMIT_DELAY" "$SCRIPT_PATH"
-else
-    echo "RESUBMIT=0 -- not resubmitting."
-fi
-
-echo "$(date): done."
+echo "$(date): array task ${SLURM_ARRAY_TASK_ID:-?} done."
