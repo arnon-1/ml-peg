@@ -61,7 +61,8 @@
 set -euo pipefail
 
 # --- Parameters (override via env vars at submit time) ---
-ML_PEG_REPO=${ML_PEG_REPO:-~/mace/ml-peg}
+# Defaults to the directory sbatch was run from, i.e. submit from the repo root
+ML_PEG_REPO=${ML_PEG_REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
 MODELS_DIR=${MODELS_DIR:-/ptmp/ademo/isambard/arndm/models/2k}
 RESULTS_BASE=${RESULTS_BASE:-/ptmp/ademo/isambard/arndm/results}
 MODELS_YML=${MODELS_YML:-$RESULTS_BASE/mlpeg/models_2k.yml}
