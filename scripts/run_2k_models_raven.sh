@@ -62,6 +62,9 @@ RESULTS_BASE=${RESULTS_BASE:-/ptmp/ademo/isambard/arndm/results}
 MODELS_YML=${MODELS_YML:-$RESULTS_BASE/mlpeg/models_2k.yml}
 LOCK_DIR=${LOCK_DIR:-$RESULTS_BASE/mlpeg/locks}
 HEAD=${HEAD:-omat_pbe}
+# Benchmarks to run (glob(s) relative to the repo root); override to test a
+# subset, e.g. CALCS="ml_peg/calcs/molecular_reactions/BH2O_36/calc_*.py"
+CALCS=${CALCS:-ml_peg/calcs/*/*/calc*}
 # Include slow-marked benchmarks (phonons, RDB7, NEBs, diatomics, ...). Leave
 # at 0: a single slow test can outlast the walltime and, with no completion
 # marker written, would rerun from scratch every resubmission.
@@ -139,7 +142,7 @@ SLOW_FLAG=""
 if [[ "$RUN_SLOW" == "1" ]]; then SLOW_FLAG="--run-slow"; fi
 
 pytest_status=0
-srun python -m pytest -v ml_peg/calcs/*/*/calc* -s $SLOW_FLAG \
+srun python -m pytest -v $CALCS -s $SLOW_FLAG \
     -p mlpeg_job_lock --models-file "$MODELS_YML" || pytest_status=$?
 echo "$(date): pytest finished with exit status $pytest_status"
 echo "$(date): array task ${SLURM_ARRAY_TASK_ID:-?} done."
