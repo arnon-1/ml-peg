@@ -4,7 +4,12 @@
 #
 # The folder is a moving target -- new models land in it at any time. So this
 # job is IDEMPOTENT and SELF-REFRESHING:
-#   1) At startup it rescans $MODELS_DIR/*.model and regenerates a models YAML
+#   0) It prepares raw checkpoints for stock mace: models trained with the
+#      distillation fork pickle a DistillationHead class stock mace lacks, so
+#      strip_distillation_heads.py writes a <name>_str.model sibling for every
+#      model (heads removed, or a plain copy if there were none). Idempotent
+#      and concurrency-safe; upload models unstripped and forget about it.
+#   1) It rescans $MODELS_DIR/*_str.model and regenerates a models YAML
 #      ($MODELS_YML), one omat-head entry per file (same config style as the
 #      test*-omat entries in ml_peg/models/models.yml: mace_mp + head omat_pbe).
 #      Files modified in the last 5 minutes are skipped -- they may still be
@@ -92,6 +97,9 @@ echo "Models dir: $MODELS_DIR"
 echo "Models YAML: $MODELS_YML"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'nvidia-smi not available')"
 
+# --- 0) Strip distillation heads (writes <name>_str.model siblings) ---
+python "$ML_PEG_REPO/scripts/strip_distillation_heads.py" "$MODELS_DIR"
+
 # --- 1) Regenerate the models YAML from the current contents of $MODELS_DIR ---
 # Entry style copied from the test*-omat entries in ml_peg/models/models.yml.
 python - "$MODELS_DIR" "$MODELS_YML" "$HEAD" <<'EOF'
@@ -104,7 +112,9 @@ models_dir, out_path, head = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 now = time.time()
 
 entries = []
-for model in sorted(models_dir.glob("*.model")):
+# Only evaluate the stripped/verified siblings written by
+# strip_distillation_heads.py, never the raw uploads.
+for model in sorted(models_dir.glob("*_str.model")):
     if now - model.stat().st_mtime < 300:
         print(f"[generate] Skipping {model.name}: modified <5 min ago (mid-copy?)")
         continue
