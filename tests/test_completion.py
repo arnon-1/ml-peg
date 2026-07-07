@@ -268,6 +268,51 @@ def test_yaml_changes_invalidate_only_changed_models(pytester: Pytester):
     result.assert_outcomes(skipped=3)
 
 
+def test_dry_run_reports_pending_calcs(pytester: Pytester):
+    """Test --dry-run reports pending calculations without running any."""
+    pytester.makeconftest(CALCS_CONFTEST.read_text())
+    pytester.makepyfile(calc_param=PARAM_CALC_FILE)
+
+    # Nothing has run yet: all models pending, nothing executes
+    result = pytester.runpytest_subprocess("calc_param.py", "--dry-run")
+    result.assert_outcomes(skipped=2)
+    assert _runs(pytester, "model-a") == 0
+    result.stdout.fnmatch_lines(
+        [
+            "*would run:*model-a*",
+            "*would run:*model-b*",
+            "*2 calculation(s) to run, 0 up to date*",
+        ]
+    )
+
+    # model-a passes, model-b fails
+    pytester.runpytest_subprocess("calc_param.py")
+
+    # Only the failed model is still pending; dry run executes nothing
+    result = pytester.runpytest_subprocess("calc_param.py", "--dry-run")
+    result.assert_outcomes(skipped=2)
+    assert _runs(pytester, "model-a") == 1
+    assert _runs(pytester, "model-b") == 1
+    result.stdout.fnmatch_lines(
+        [
+            "*up to date:*model-a*",
+            "*would run:*model-b*",
+            "*1 calculation(s) to run, 1 up to date*",
+        ]
+    )
+
+    # --collect-only also reports calculation statuses
+    result = pytester.runpytest_subprocess("calc_param.py", "--collect-only")
+    assert _runs(pytester, "model-a") == 1
+    result.stdout.fnmatch_lines(
+        [
+            "*up to date:*model-a*",
+            "*would run:*model-b*",
+            "*1 calculation(s) to run, 1 up to date*",
+        ]
+    )
+
+
 def test_failed_calcs_not_marked(pytester: Pytester):
     """Test failed calculations are not marked as completed."""
     pytester.makeconftest(CALCS_CONFTEST.read_text())

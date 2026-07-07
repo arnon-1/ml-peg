@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
-from pytest import CallInfo, Config, Item, Parser
+from pytest import CallInfo, Config, Item, Parser, TerminalReporter
 
 from ml_peg import models
 from ml_peg.calcs.utils import completion
+
+DRY_RUN_STATUS = pytest.StashKey[list]()
 
 
 def pytest_addoption(parser: Parser) -> None:
@@ -37,6 +40,12 @@ def pytest_addoption(parser: Parser) -> None:
         action="store_true",
         default=False,
         help="Run calculations even if they previously completed",
+    )
+    parser.addoption(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Report which calculations would run, without running any",
     )
 
 
@@ -94,6 +103,103 @@ def _module_models(item: Item) -> dict[str, Any] | None:
     return module_models if isinstance(module_models, dict) else None
 
 
+def _model_statuses(item: Item) -> dict[str, bool] | None:
+    """
+    Get completion status for each model a test item would run.
+
+    Parameters
+    ----------
+    item
+        Pytest test item.
+
+    Returns
+    -------
+    dict[str, bool] | None
+        Whether each model's calculation previously completed with identical
+        inputs, or None if the test does not run models.
+    """
+    mlip = _item_mlip(item)
+    if mlip is not None:
+        names = [mlip[0]]
+        test_name = item.originalname
+    else:
+        module_models = _module_models(item)
+        if module_models is None:
+            return None
+        names = list(module_models)
+        test_name = item.name
+
+    calc_dir = item.path.parent
+    return {
+        name: completion.is_complete(
+            calc_dir / "outputs",
+            name,
+            test_name,
+            completion.calc_fingerprint(calc_dir, name),
+        )
+        for name in names
+    }
+
+
+def pytest_collection_modifyitems(config: Config, items: list[Item]) -> None:
+    """
+    Report which calculations would run in dry run or collect-only mode.
+
+    In dry run mode, all calculations are also skipped.
+
+    Parameters
+    ----------
+    config
+        Pytest configuration object.
+    items
+        Collected test items.
+    """
+    dry_run = config.getoption("--dry-run", default=False)
+    if not dry_run and not config.getoption("collectonly", default=False):
+        return
+
+    calcs_dir = Path(__file__).parent
+    status_lines = config.stash.setdefault(DRY_RUN_STATUS, [])
+    skip_dry_run = pytest.mark.skip(reason="dry run")
+    for item in items:
+        if not item.path.is_relative_to(calcs_dir):
+            continue
+        for name, done in (_model_statuses(item) or {}).items():
+            status = "up to date" if done else "would run"
+            status_lines.append(f"{status}: {item.nodeid} - {name}")
+        if dry_run:
+            item.add_marker(skip_dry_run)
+
+
+def pytest_terminal_summary(
+    terminalreporter: TerminalReporter, exitstatus: int, config: Config
+) -> None:
+    """
+    Print the calculation statuses gathered in dry run mode.
+
+    Parameters
+    ----------
+    terminalreporter
+        Pytest terminal reporter.
+    exitstatus
+        Exit status that will be reported to the operating system.
+    config
+        Pytest configuration object.
+    """
+    status_lines = config.stash.get(DRY_RUN_STATUS, None)
+    if not status_lines:
+        return
+
+    terminalreporter.section("calculations dry run")
+    for line in sorted(status_lines):
+        terminalreporter.write_line(line)
+
+    pending = sum(line.startswith("would run") for line in status_lines)
+    terminalreporter.write_line(
+        f"{pending} calculation(s) to run, {len(status_lines) - pending} up to date"
+    )
+
+
 def pytest_runtest_setup(item: Item) -> None:
     """
     Skip calculations that previously completed with identical inputs.
@@ -115,26 +221,22 @@ def pytest_runtest_setup(item: Item) -> None:
         return
 
     completion.clear_data_files()
-    force = item.config.getoption("--force-calcs")
-    calc_dir = item.path.parent
-    out_path = calc_dir / "outputs"
+    if mlip is None:
+        item._pruned_models = {}
+    if item.config.getoption("--force-calcs"):
+        return
+
+    statuses = _model_statuses(item)
 
     if mlip is not None:
-        name = mlip[0]
-        fingerprint = completion.calc_fingerprint(calc_dir, name)
-        if not force and completion.is_complete(
-            out_path, name, item.originalname, fingerprint
-        ):
-            pytest.skip(f"'{name}' previously completed. Use --force-calcs to re-run.")
+        if statuses[mlip[0]]:
+            pytest.skip(
+                f"'{mlip[0]}' previously completed. Use --force-calcs to re-run."
+            )
         return
 
-    item._pruned_models = {}
-    if force:
-        return
-
-    for name in list(module_models):
-        fingerprint = completion.calc_fingerprint(calc_dir, name)
-        if completion.is_complete(out_path, name, item.name, fingerprint):
+    for name, done in statuses.items():
+        if done:
             print(f"[skip] {item.name}: '{name}' previously completed")
             item._pruned_models[name] = module_models.pop(name)
 
