@@ -6,8 +6,9 @@ class that stock mace does not have, so ``torch.load`` fails with an
 AttributeError. The head lives in a separate ``distillation_heads`` ModuleDict
 that inference never touches, so it can simply be deleted.
 
-For every ``<name>.model`` in the given directory this script writes a
-``<name>_str.model`` sibling: the model with its distillation heads removed,
+For every ``<name>.model`` in the given directory tree (subdirectories
+included) this script writes a ``<name>_str.model`` sibling: the model with
+its distillation heads removed,
 or a plain copy if it has none. The benchmark job only evaluates the
 ``*_str.model`` files. The script is idempotent and safe under concurrent
 invocation (atomic writes; up-to-date outputs are skipped). Each output
@@ -112,25 +113,26 @@ def main(models_dir: Path) -> None:
     Parameters
     ----------
     models_dir
-        Directory containing ``*.model`` checkpoints.
+        Directory tree containing ``*.model`` checkpoints.
     """
     now = time.time()
-    for src in sorted(models_dir.glob("*.model")):
+    for src in sorted(models_dir.rglob("*.model")):
+        rel = src.relative_to(models_dir)
         if src.stem.endswith("_str"):
             continue
         if now - src.stat().st_mtime < FRESH_SECONDS:
-            print(f"[strip] Skipping {src.name}: modified <5 min ago (mid-copy?)")
+            print(f"[strip] Skipping {rel}: modified <5 min ago (mid-copy?)")
             continue
         dst = src.with_stem(src.stem + "_str")
         if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
-            print(f"[strip] Up to date: {dst.name}")
+            print(f"[strip] Up to date: {dst.relative_to(models_dir)}")
             continue
         try:
             action = strip_model(src, dst)
         except Exception as err:
-            print(f"[strip] FAILED for {src.name}: {err}")
+            print(f"[strip] FAILED for {rel}: {err}")
             continue
-        print(f"[strip] {action}: {src.name} -> {dst.name}")
+        print(f"[strip] {action}: {rel} -> {dst.name}")
 
 
 if __name__ == "__main__":

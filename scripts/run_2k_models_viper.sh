@@ -11,7 +11,8 @@
 #      strip_distillation_heads.py writes a <name>_str.model sibling for every
 #      model (heads removed, or a plain copy if there were none). Idempotent
 #      and concurrency-safe; upload models unstripped and forget about it.
-#   1) It rescans $MODELS_DIR/*_str.model and regenerates a models YAML
+#   1) It rescans $MODELS_DIR for *_str.model (recursively) and regenerates a
+#      models YAML
 #      ($MODELS_YML), one omat-head entry per file (same config style as the
 #      test*-omat entries in ml_peg/models/models.yml: mace_mp + head omat_pbe).
 #      Files modified in the last 5 minutes are skipped -- they may still be
@@ -126,12 +127,18 @@ now = time.time()
 
 entries = []
 # Only evaluate the stripped/verified siblings written by
-# strip_distillation_heads.py, never the raw uploads.
-for model in sorted(models_dir.glob("*_str.model")):
+# strip_distillation_heads.py, never the raw uploads. Subdirectories are
+# included; their path becomes part of the model name to keep it unique
+# (top-level models keep the same name as before).
+for model in sorted(models_dir.rglob("*_str.model")):
+    rel = model.relative_to(models_dir)
     if now - model.stat().st_mtime < 300:
-        print(f"[generate] Skipping {model.name}: modified <5 min ago (mid-copy?)")
+        print(f"[generate] Skipping {rel}: modified <5 min ago (mid-copy?)")
         continue
-    name = model.stem.replace("_", "-").replace(".", "-") + "-omat"
+    name = (
+        str(rel.with_suffix("")).replace("/", "-").replace("_", "-").replace(".", "-")
+        + "-omat"
+    )
     entries.append(
         f"{name}:\n"
         "  module: mace.calculators\n"
