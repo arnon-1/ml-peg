@@ -58,17 +58,25 @@ echo "=== Creating branch venv"
 python3 -m venv "$BRANCH_ENV"
 source "$BRANCH_ENV/bin/activate"
 
-BASE_SITE=$("$BASE_ENV/bin/python" -c "import site; print(site.getsitepackages()[0])")
 BRANCH_SITE=$(python -c "import site; print(site.getsitepackages()[0])")
-echo "Base site-packages:   $BASE_SITE"
-echo "Branch site-packages: $BRANCH_SITE"
 
 # Share the base env's packages, LATE in sys.path so branch installs win.
-# addsitedir (not a plain path line) so the base env's own .pth files are
-# processed too -- the MACE fork is installed editable there and is only
-# importable through its .pth hooks.
-echo "import site; site.addsitedir('$BASE_SITE')" \
-    > "$BRANCH_SITE/zz-shared-base-venv.pth"
+# Replicate EVERY site-packages dir the base env sees, in its order: a
+# --system-site-packages base venv splits its stack across its own site dir
+# (torch, the MACE fork) and the module python's (numpy, scipy, ...).
+# addsitedir (not plain path lines) so those dirs' own .pth files are
+# processed too -- the fork is installed editable in the base env and is
+# only importable through its .pth hooks.
+"$BASE_ENV/bin/python" - > "$BRANCH_SITE/zz-shared-base-venv.pth" <<'EOF'
+import sys
+
+for path in sys.path:
+    if path.endswith("site-packages"):
+        print(f"import site; site.addsitedir({path!r})")
+EOF
+echo "Branch site-packages: $BRANCH_SITE"
+echo "Sharing base env site dirs:"
+cat "$BRANCH_SITE/zz-shared-base-venv.pth"
 
 cd "$ML_PEG_REPO"
 
