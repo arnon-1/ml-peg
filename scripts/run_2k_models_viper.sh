@@ -26,12 +26,14 @@
 #      so every later task would restart it from scratch. Completion is only
 #      tracked per (model, test), not mid-test.
 #   3) It runs as a JOB ARRAY (default 6 tasks, max 2 running at once). Each
-#      array task is an independent sweep; the tasks share the work through
-#      lock files in $LOCK_DIR (see mlpeg_job_lock.py): a task atomically
-#      claims each test before running it and skips tests another live task
-#      has claimed, so no (model, benchmark) pair is computed twice. Locks are
-#      released when the test ends; locks from tasks killed mid-test go stale
-#      after MLPEG_LOCK_STALE_HOURS (default 25 h) and are then reclaimed.
+#      array task takes a FULL node (2x MI300A) and runs TWO pytest workers,
+#      one per GPU. All workers -- within a task and across tasks -- share
+#      the work through lock files in $LOCK_DIR (see mlpeg_job_lock.py): a
+#      worker atomically claims each test before running it and skips tests
+#      another live worker has claimed, so no (model, benchmark) pair is
+#      computed twice. Locks are released when the test ends; locks from
+#      workers killed mid-test go stale after MLPEG_LOCK_STALE_HOURS
+#      (default 25 h) and are then reclaimed.
 #      Later tasks in the array rescan $MODELS_DIR when they start, so models
 #      arriving while the array works through its queue are picked up; once
 #      the array is exhausted, submit it again for newer models. Override the
@@ -53,12 +55,12 @@
 #SBATCH -J mlpeg_2k
 #SBATCH --array=0-5%2
 #
-#SBATCH --ntasks=1
+#SBATCH --ntasks=2
 #SBATCH --constraint="apu"
 #
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=110000
+#SBATCH --mem=220000
 #
 #SBATCH --mail-type=none
 #SBATCH --time=24:00:00
@@ -164,15 +166,28 @@ print(f"[generate] Wrote {len(entries)} models to {out_path}")
 EOF
 
 # --- 2) Run all benchmark calculations for models not yet completed ---
-# Completion markers make this a no-op for (model, benchmark) pairs that
-# already ran with identical inputs. Capture pytest's exit status: some
-# benchmarks failing for some models is expected and should not abort the
-# task under set -e.
+# One pytest worker per GPU; the lock files divide the tests between them
+# (and between concurrently running array tasks). Completion markers make
+# this a no-op for (model, benchmark) pairs that already ran with identical
+# inputs. Worker exit statuses are captured: some benchmarks failing for
+# some models is expected and should not abort the task under set -e.
 SLOW_FLAG=""
 if [[ "$RUN_SLOW" == "1" ]]; then SLOW_FLAG="--run-slow"; fi
 
-pytest_status=0
-srun python -m pytest -v $CALCS -s $SLOW_FLAG \
-    -p mlpeg_job_lock --models-file "$MODELS_YML" || pytest_status=$?
-echo "$(date): pytest finished with exit status $pytest_status"
+WORKER_LOG_BASE="$RESULTS_BASE/logs/mlpeg_2k_${SLURM_ARRAY_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"
+run_worker() {
+    local gpu=$1
+    HIP_VISIBLE_DEVICES=$gpu ROCR_VISIBLE_DEVICES=$gpu \
+        python -m pytest -v $CALCS -s $SLOW_FLAG \
+        -p mlpeg_job_lock --models-file "$MODELS_YML" \
+        > "$WORKER_LOG_BASE.gpu$gpu.log" 2>&1
+}
+
+echo "Worker logs: $WORKER_LOG_BASE.gpu{0,1}.log"
+run_worker 0 & pid0=$!
+run_worker 1 & pid1=$!
+status0=0; status1=0
+wait "$pid0" || status0=$?
+wait "$pid1" || status1=$?
+echo "$(date): pytest workers finished (gpu0: $status0, gpu1: $status1)"
 echo "$(date): array task ${SLURM_ARRAY_TASK_ID:-?} done."
