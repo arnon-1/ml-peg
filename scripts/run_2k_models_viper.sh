@@ -49,8 +49,8 @@
 #     step through every benchmark):
 #       cd $ML_PEG_REPO && pytest ml_peg/calcs/*/*/calc* -s --run-mock --mock-only
 #
-#SBATCH -o /ptmp/ademo/isambard/arndm/results/logs/mlpeg_2k_%A_%a.out
-#SBATCH -e /ptmp/ademo/isambard/arndm/results/logs/mlpeg_2k_%A_%a.err
+#SBATCH -o /ptmp/ademo/isambard/arndm/results/logs/mlpeg/mlpeg_2k_%A_%a.out
+#SBATCH -e /ptmp/ademo/isambard/arndm/results/logs/mlpeg/mlpeg_2k_%A_%a.err
 #SBATCH -D ./
 #SBATCH -J mlpeg_2k
 #SBATCH --array=0-5%2
@@ -90,7 +90,7 @@ CALCS=${CALCS:-ml_peg/calcs/*/*/calc*}
 # marker written, would rerun from scratch every resubmission.
 RUN_SLOW=${RUN_SLOW:-0}
 
-mkdir -p "$RESULTS_BASE/logs" "$(dirname "$MODELS_YML")" "$LOCK_DIR"
+mkdir -p "$RESULTS_BASE/logs/mlpeg" "$(dirname "$MODELS_YML")" "$LOCK_DIR"
 
 # --- Environment ---
 if [[ -f "$ML_PEG_REPO/activate_env.sh" ]]; then
@@ -174,7 +174,7 @@ EOF
 SLOW_FLAG=""
 if [[ "$RUN_SLOW" == "1" ]]; then SLOW_FLAG="--run-slow"; fi
 
-WORKER_LOG_BASE="$RESULTS_BASE/logs/mlpeg_2k_${SLURM_ARRAY_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"
+WORKER_LOG_BASE="$RESULTS_BASE/logs/mlpeg/mlpeg_2k_${SLURM_ARRAY_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"
 run_worker() {
     local gpu=$1
     HIP_VISIBLE_DEVICES=$gpu ROCR_VISIBLE_DEVICES=$gpu \
