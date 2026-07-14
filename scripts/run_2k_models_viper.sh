@@ -168,10 +168,13 @@ EOF
 # inputs. Worker exit statuses are captured: some benchmarks failing for
 # some models is expected and should not abort the task under set -e.
 WORKER_LOG_BASE="$RESULTS_BASE/logs/mlpeg/mlpeg_2k_${SLURM_ARRAY_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"
+# test_phonons_ref (slow) scrapes alexandria.icams.rub.de at run time, which
+# batch nodes may not reach; generate the phonon DFT reference on a login node.
 run_worker() {
     local gpu=$1
     HIP_VISIBLE_DEVICES=$gpu ROCR_VISIBLE_DEVICES=$gpu \
         python -m pytest -v $CALCS -s --run-slow \
+        --deselect "ml_peg/calcs/bulk_crystal/phonons/calc_phonons.py::test_phonons_ref" \
         -p mlpeg_job_lock --models-file "$MODELS_YML" \
         > "$WORKER_LOG_BASE.gpu$gpu.log" 2>&1
 }

@@ -176,8 +176,11 @@ EOF
 # already ran with identical inputs. Capture pytest's exit status: some
 # benchmarks failing for some models is expected and should not abort the
 # task under set -e.
+# test_phonons_ref (slow) scrapes alexandria.icams.rub.de at run time, which
+# batch nodes cannot reach; generate the phonon DFT reference on a login node.
 pytest_status=0
 srun python -m pytest -v $CALCS -s --run-slow \
+    --deselect "ml_peg/calcs/bulk_crystal/phonons/calc_phonons.py::test_phonons_ref" \
     -p mlpeg_job_lock --models-file "$MODELS_YML" || pytest_status=$?
 echo "$(date): pytest finished with exit status $pytest_status"
 echo "$(date): array task ${SLURM_ARRAY_TASK_ID:-?} done."

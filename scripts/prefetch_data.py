@@ -12,8 +12,9 @@ jobs on clusters whose batch nodes are offline:
 
 NOT covered:
 - Benchmarks fetching from alexandria.icams.rub.de at test time (phonons,
-  high_pressure_relaxation, low_dimensional_relaxation). All are slow-marked
-  and excluded from the default sweep (RUN_SLOW=0).
+  high_pressure_relaxation, low_dimensional_relaxation). test_phonons_ref is
+  slow-marked and explicitly deselected in the sweep job scripts; the rest
+  are very_slow-marked and excluded from the sweep.
 - CMRAds200 calls download_github_data(force=True) at TEST time, ignoring
   the cache: it needs internet on the batch node even after prefetching.
 """
