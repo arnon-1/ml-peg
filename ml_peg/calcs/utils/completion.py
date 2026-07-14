@@ -12,6 +12,10 @@ MARKER_FILENAME = ".completed.json"
 # Benchmark data files recorded since the current test started
 _data_files: set[str] = set()
 
+# Content hashes of local files (e.g. model checkpoints), keyed by path, size
+# and mtime so each file is only re-hashed after it changes
+_file_hashes: dict[tuple[str, int, int], str] = {}
+
 
 def record_data_file(path: Path | str) -> None:
     """
@@ -94,6 +98,31 @@ def _local_files(config: Any) -> list[Path]:
     return []
 
 
+def _file_sha256(path: Path) -> str:
+    """
+    Hash a file's contents, cached per process.
+
+    Parameters
+    ----------
+    path
+        Path of the file to hash.
+
+    Returns
+    -------
+    str
+        Hex digest of the file's contents.
+    """
+    stat = path.stat()
+    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    if key not in _file_hashes:
+        sha = hashlib.sha256()
+        with open(path, "rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                sha.update(chunk)
+        _file_hashes[key] = sha.hexdigest()
+    return _file_hashes[key]
+
+
 def calc_fingerprint(
     calc_dir: Path, model_name: str, config: dict[str, Any] | None = None
 ) -> str:
@@ -101,8 +130,8 @@ def calc_fingerprint(
     Fingerprint a calculation's inputs for one model.
 
     Hashes the Python source files in the benchmark directory, the model's
-    configuration, and the size and modification time of any local files the
-    configuration references, such as model checkpoints.
+    configuration, and the contents of any local files the configuration
+    references, such as model checkpoints.
 
     Parameters
     ----------
@@ -126,8 +155,7 @@ def calc_fingerprint(
         sha.update(source.read_bytes())
     sha.update(json.dumps(config, sort_keys=True, default=str).encode())
     for path in _local_files(config):
-        stat = path.stat()
-        sha.update(f"{path}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+        sha.update(f"{path}:{_file_sha256(path)}".encode())
     return sha.hexdigest()
 
 

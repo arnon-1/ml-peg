@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from pytest import Pytester
@@ -142,6 +143,24 @@ def test_fingerprint_tracks_local_config_files(tmp_path):
 
     fingerprint = completion.calc_fingerprint(tmp_path, "model", config=config)
     checkpoint.write_text("retrained weights")
+    assert completion.calc_fingerprint(tmp_path, "model", config=config) != fingerprint
+
+
+def test_fingerprint_ignores_checkpoint_mtime(tmp_path):
+    """Test fingerprint is unchanged when a checkpoint is re-copied unmodified."""
+    (tmp_path / "calc_fake.py").write_text("A = 1\n")
+    checkpoint = tmp_path / "model.ckpt"
+    checkpoint.write_text("weights")
+    config = {"kwargs": {"model_path": str(checkpoint)}}
+
+    fingerprint = completion.calc_fingerprint(tmp_path, "model", config=config)
+
+    # Bump mtime without touching the content, as re-staging with cp does
+    os.utime(checkpoint, ns=(1, 1))
+    assert completion.calc_fingerprint(tmp_path, "model", config=config) == fingerprint
+
+    # Same size, new content: the file is re-hashed and the fingerprint changes
+    checkpoint.write_text("weightz")
     assert completion.calc_fingerprint(tmp_path, "model", config=config) != fingerprint
 
 
