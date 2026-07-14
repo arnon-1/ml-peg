@@ -17,7 +17,8 @@
 #      test*-omat entries in ml_peg/models/models.yml: mace_mp + head omat_pbe).
 #      Files modified in the last 5 minutes are skipped -- they may still be
 #      mid-copy; the next run picks them up.
-#   2) It runs pytest over all calcs with --models-file pointing at that YAML.
+#   2) It runs `ml_peg calc` (the documented CLI; pytest under the hood) over
+#      all calcs with --models-file pointing at that YAML.
 #      ml-peg's completion markers (outputs/<model>/.completed.json) skip every
 #      (model, benchmark) pair that already finished with identical inputs, so
 #      only new models (or new/changed benchmarks) actually compute anything.
@@ -26,7 +27,7 @@
 #      so every later task would restart it from scratch. Completion is only
 #      tracked per (model, test), not mid-test.
 #   3) It runs as a JOB ARRAY (default 6 tasks, max 2 running at once). Each
-#      array task takes a FULL node (2x MI300A) and runs TWO pytest workers,
+#      array task takes a FULL node (2x MI300A) and runs TWO calc workers,
 #      one per GPU. All workers -- within a task and across tasks -- share
 #      the work through lock files in $LOCK_DIR (see mlpeg_job_lock.py): a
 #      worker atomically claims each test before running it and skips tests
@@ -47,7 +48,7 @@
 #   - If batch nodes cannot reach the benchmark data hosts, prefetch into
 #     ~/.cache/ml_peg on a login node first (cheap mock model, but it does
 #     step through every benchmark):
-#       cd $ML_PEG_REPO && pytest ml_peg/calcs/*/*/calc* -s --run-mock --mock-only
+#       cd $ML_PEG_REPO && ml_peg calc --mock-only
 #
 #SBATCH -o /ptmp/ademo/isambard/arndm/results/logs/mlpeg/mlpeg_2k_%A_%a.out
 #SBATCH -e /ptmp/ademo/isambard/arndm/results/logs/mlpeg/mlpeg_2k_%A_%a.err
@@ -69,7 +70,7 @@ set -euo pipefail
 
 # --- Parameters ---
 # Override by passing VAR=value as script arguments, e.g.
-#   sbatch --array=0 scripts/run_2k_models_viper.sh CALCS="ml_peg/calcs/molecular_reactions/BH2O_36/calc_*.py"
+#   sbatch --array=0 scripts/run_2k_models_viper.sh CATEGORY=molecular_reactions TEST=BH2O_36
 # Script arguments are always forwarded by sbatch, unlike environment
 # variables, which the site's Slurm policy may strip from the job.
 for arg in "$@"; do
@@ -82,9 +83,10 @@ RESULTS_BASE=${RESULTS_BASE:-/ptmp/ademo/isambard/arndm/results}
 MODELS_YML=${MODELS_YML:-$RESULTS_BASE/mlpeg/models_2k.yml}
 LOCK_DIR=${LOCK_DIR:-$RESULTS_BASE/mlpeg/locks}
 HEAD=${HEAD:-omat_pbe}
-# Benchmarks to run (glob(s) relative to the repo root); override to test a
-# subset, e.g. CALCS="ml_peg/calcs/molecular_reactions/BH2O_36/calc_*.py"
-CALCS=${CALCS:-ml_peg/calcs/*/*/calc*}
+# Benchmarks to run (ml_peg calc --category/--test selectors); override to
+# run a subset, e.g. CATEGORY=molecular_reactions TEST=BH2O_36
+CATEGORY=${CATEGORY:-*}
+TEST=${TEST:-*}
 
 mkdir -p "$RESULTS_BASE/logs/mlpeg" "$(dirname "$MODELS_YML")" "$LOCK_DIR"
 
@@ -106,7 +108,7 @@ export PYTHONPATH="$ML_PEG_REPO/scripts${PYTHONPATH:+:$PYTHONPATH}"
 echo "$(date): ml-peg 2k-model sweep, array task ${SLURM_ARRAY_TASK_ID:-?} on $(hostname)"
 echo "Models dir: $MODELS_DIR"
 echo "Models YAML: $MODELS_YML"
-echo "Settings: HEAD=$HEAD CALCS=$CALCS"
+echo "Settings: HEAD=$HEAD CATEGORY=$CATEGORY TEST=$TEST"
 echo "GPU: $(rocm-smi --showproductname 2>/dev/null | grep -m1 'series:' || echo 'rocm-smi not available')"
 
 # --- 0) Strip distillation heads (writes <name>_str.model siblings) ---
@@ -162,20 +164,24 @@ print(f"[generate] Wrote {len(entries)} models to {out_path}")
 EOF
 
 # --- 2) Run all benchmark calculations for models not yet completed ---
-# One pytest worker per GPU; the lock files divide the tests between them
-# (and between concurrently running array tasks). Completion markers make
-# this a no-op for (model, benchmark) pairs that already ran with identical
-# inputs. Worker exit statuses are captured: some benchmarks failing for
-# some models is expected and should not abort the task under set -e.
-WORKER_LOG_BASE="$RESULTS_BASE/logs/mlpeg/mlpeg_2k_${SLURM_ARRAY_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"
+# One ml_peg calc worker per GPU; the lock files divide the tests between
+# them (and between concurrently running array tasks). Completion markers
+# make this a no-op for (model, benchmark) pairs that already ran with
+# identical inputs. Worker exit statuses are captured: some benchmarks
+# failing for some models is expected and should not abort the task under
+# set -e (nonzero only if the CLI itself fails; ml_peg calc does not
+# propagate pytest's exit code).
+# --no-run-mock: don't add the mock model to the sweep.
 # test_phonons_ref (slow) scrapes alexandria.icams.rub.de at run time, which
 # batch nodes may not reach; generate the phonon DFT reference on a login node.
+WORKER_LOG_BASE="$RESULTS_BASE/logs/mlpeg/mlpeg_2k_${SLURM_ARRAY_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"
 run_worker() {
     local gpu=$1
     HIP_VISIBLE_DEVICES=$gpu ROCR_VISIBLE_DEVICES=$gpu \
-        python -m pytest -v $CALCS -s --run-slow \
+        ml_peg calc --category "$CATEGORY" --test "$TEST" \
+        --run-slow --no-run-mock --models-file "$MODELS_YML" \
         --deselect "ml_peg/calcs/bulk_crystal/phonons/calc_phonons.py::test_phonons_ref" \
-        -p mlpeg_job_lock --models-file "$MODELS_YML" \
+        -p mlpeg_job_lock \
         > "$WORKER_LOG_BASE.gpu$gpu.log" 2>&1
 }
 
@@ -185,5 +191,5 @@ run_worker 1 & pid1=$!
 status0=0; status1=0
 wait "$pid0" || status0=$?
 wait "$pid1" || status1=$?
-echo "$(date): pytest workers finished (gpu0: $status0, gpu1: $status1)"
+echo "$(date): ml_peg calc workers finished (gpu0: $status0, gpu1: $status1)"
 echo "$(date): array task ${SLURM_ARRAY_TASK_ID:-?} done."

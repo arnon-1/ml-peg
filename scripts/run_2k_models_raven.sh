@@ -15,7 +15,8 @@
 #      test*-omat entries in ml_peg/models/models.yml: mace_mp + head omat_pbe).
 #      Files modified in the last 5 minutes are skipped -- they may still be
 #      mid-copy; the next run picks them up.
-#   2) It runs pytest over all calcs with --models-file pointing at that YAML.
+#   2) It runs `ml_peg calc` (the documented CLI; pytest under the hood) over
+#      all calcs with --models-file pointing at that YAML.
 #      ml-peg's completion markers (outputs/<model>/.completed.json) skip every
 #      (model, benchmark) pair that already finished with identical inputs, so
 #      only new models (or new/changed benchmarks) actually compute anything.
@@ -38,7 +39,7 @@
 # PREREQUISITES (batch jobs have NO internet):
 #   - Benchmark data must be cached in ~/.cache/ml_peg first. Prefetch on a
 #     login node with the mock model (cheap, but triggers every download):
-#       cd $ML_PEG_REPO && pytest ml_peg/calcs/*/*/calc* -s --run-mock --mock-only
+#       cd $ML_PEG_REPO && ml_peg calc --mock-only
 #   - Model files must be in $MODELS_DIR, e.g. from a local clone:
 #       scp -J ademo@gate.mpcdf.mpg.de models/2k/*.model \
 #           ademo@raven.mpcdf.mpg.de:/ptmp/ademo/isambard/arndm/models/2k/
@@ -63,7 +64,7 @@ set -euo pipefail
 
 # --- Parameters ---
 # Override by passing VAR=value as script arguments, e.g.
-#   sbatch --array=0 scripts/run_2k_models_raven.sh CALCS="ml_peg/calcs/molecular_reactions/BH2O_36/calc_*.py"
+#   sbatch --array=0 scripts/run_2k_models_raven.sh CATEGORY=molecular_reactions TEST=BH2O_36
 # Script arguments are always forwarded by sbatch, unlike environment
 # variables, which the site's Slurm policy may strip from the job.
 for arg in "$@"; do
@@ -76,9 +77,10 @@ RESULTS_BASE=${RESULTS_BASE:-/ptmp/ademo/isambard/arndm/results}
 MODELS_YML=${MODELS_YML:-$RESULTS_BASE/mlpeg/models_2k.yml}
 LOCK_DIR=${LOCK_DIR:-$RESULTS_BASE/mlpeg/locks}
 HEAD=${HEAD:-omat_pbe}
-# Benchmarks to run (glob(s) relative to the repo root); override to test a
-# subset, e.g. CALCS="ml_peg/calcs/molecular_reactions/BH2O_36/calc_*.py"
-CALCS=${CALCS:-ml_peg/calcs/*/*/calc*}
+# Benchmarks to run (ml_peg calc --category/--test selectors); override to
+# run a subset, e.g. CATEGORY=molecular_reactions TEST=BH2O_36
+CATEGORY=${CATEGORY:-*}
+TEST=${TEST:-*}
 # Evaluate with torch.compile (adds compile_mode: default to every model's
 # kwargs). Each test compiles its own calculator; the inductor cache on /ptmp
 # amortises this across tests and tasks. CAUTION: compile has been seen to
@@ -115,7 +117,7 @@ export PYTHONPATH="$ML_PEG_REPO/scripts${PYTHONPATH:+:$PYTHONPATH}"
 echo "$(date): ml-peg 2k-model sweep, array task ${SLURM_ARRAY_TASK_ID:-?} on $(hostname)"
 echo "Models dir: $MODELS_DIR"
 echo "Models YAML: $MODELS_YML"
-echo "Settings: COMPILE=$COMPILE HEAD=$HEAD CALCS=$CALCS"
+echo "Settings: COMPILE=$COMPILE HEAD=$HEAD CATEGORY=$CATEGORY TEST=$TEST"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'nvidia-smi not available')"
 
 # --- 0) Strip distillation heads (writes <name>_str.model siblings) ---
@@ -173,14 +175,17 @@ EOF
 
 # --- 2) Run all benchmark calculations for models not yet completed ---
 # Completion markers make this a no-op for (model, benchmark) pairs that
-# already ran with identical inputs. Capture pytest's exit status: some
-# benchmarks failing for some models is expected and should not abort the
-# task under set -e.
+# already ran with identical inputs. Some benchmarks failing for some models
+# is expected and must not abort the task under set -e, so capture the exit
+# status (nonzero only if the CLI itself fails; ml_peg calc does not
+# propagate pytest's exit code).
+# --no-run-mock: don't add the mock model to the sweep.
 # test_phonons_ref (slow) scrapes alexandria.icams.rub.de at run time, which
 # batch nodes cannot reach; generate the phonon DFT reference on a login node.
-pytest_status=0
-srun python -m pytest -v $CALCS -s --run-slow \
+calc_status=0
+srun ml_peg calc --category "$CATEGORY" --test "$TEST" \
+    --run-slow --no-run-mock --models-file "$MODELS_YML" \
     --deselect "ml_peg/calcs/bulk_crystal/phonons/calc_phonons.py::test_phonons_ref" \
-    -p mlpeg_job_lock --models-file "$MODELS_YML" || pytest_status=$?
-echo "$(date): pytest finished with exit status $pytest_status"
+    -p mlpeg_job_lock || calc_status=$?
+echo "$(date): ml_peg calc finished with exit status $calc_status"
 echo "$(date): array task ${SLURM_ARRAY_TASK_ID:-?} done."
