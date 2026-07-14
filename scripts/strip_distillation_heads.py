@@ -11,9 +11,11 @@ included) this script writes a ``<name>_str.model`` sibling: the model with
 its distillation heads removed,
 or a plain copy if it has none. The benchmark job only evaluates the
 ``*_str.model`` files. The script is idempotent and safe under concurrent
-invocation (atomic writes; up-to-date outputs are skipped). Each output
-inherits its source's mtime, so a re-uploaded source is re-stripped and the
-job script's fresh-mtime (mid-copy) guard keeps working.
+invocation (atomic writes; existing outputs are never regenerated, since
+``torch.save`` is not byte-deterministic and rewriting an output would
+invalidate the benchmarks' content-based completion markers). To re-strip a
+retrained model re-uploaded under the same name, delete its ``*_str.model``
+first.
 
 Usage: python strip_distillation_heads.py <models_dir>
 """
@@ -99,10 +101,6 @@ def strip_model(src: Path, dst: Path) -> str:
         action = "copied"
 
     os.replace(tmp, dst)
-    # Inherit the source mtime: keeps outputs stable across reruns and lets a
-    # re-uploaded (newer) source trigger a re-strip.
-    stat = src.stat()
-    os.utime(dst, ns=(stat.st_atime_ns, stat.st_mtime_ns))
     return action
 
 
@@ -124,7 +122,12 @@ def main(models_dir: Path) -> None:
             print(f"[strip] Skipping {rel}: modified <5 min ago (mid-copy?)")
             continue
         dst = src.with_stem(src.stem + "_str")
-        if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
+        # Never re-strip an existing output: torch.save is not
+        # byte-deterministic, so regenerating it would change the content
+        # fingerprint and invalidate completion markers. A retrained model
+        # re-uploaded under the SAME name needs its *_str.model deleted by
+        # hand to be picked up.
+        if dst.exists():
             print(f"[strip] Up to date: {dst.relative_to(models_dir)}")
             continue
         try:
