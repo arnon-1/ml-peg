@@ -85,6 +85,36 @@ def _item_mlip(item: Item) -> tuple[str, Any] | None:
     return None
 
 
+def _completion_test_name(item: Item) -> str:
+    """
+    Get the test name to key completion markers on for a model ("mlip") test.
+
+    Uses the unparametrized test name, extended with any parameters other
+    than the model itself (e.g. a case index), so each parametrized case is
+    tracked separately per model.
+
+    Parameters
+    ----------
+    item
+        Pytest test item.
+
+    Returns
+    -------
+    str
+        Test name to key completion markers on.
+    """
+    callspec = getattr(item, "callspec", None)
+    extra = {
+        name: value
+        for name, value in (callspec.params.items() if callspec is not None else ())
+        if name != "mlip"
+    }
+    if not extra:
+        return item.originalname
+    suffix = "-".join(f"{name}={value}" for name, value in sorted(extra.items()))
+    return f"{item.originalname}[{suffix}]"
+
+
 def _module_models(item: Item) -> dict[str, Any] | None:
     """
     Get the module-level MODELS dict for a test item, if defined.
@@ -121,7 +151,7 @@ def _model_statuses(item: Item) -> dict[str, bool] | None:
     mlip = _item_mlip(item)
     if mlip is not None:
         names = [mlip[0]]
-        test_name = item.originalname
+        test_name = _completion_test_name(item)
     else:
         module_models = _module_models(item)
         if module_models is None:
@@ -286,7 +316,7 @@ def pytest_runtest_teardown(item: Item) -> None:
 
     if getattr(item, "_calcs_passed", False):
         if mlip is not None:
-            test_name, names = item.originalname, [mlip[0]]
+            test_name, names = _completion_test_name(item), [mlip[0]]
         elif pruned is not None:
             test_name, names = item.name, list(module_models)
         else:

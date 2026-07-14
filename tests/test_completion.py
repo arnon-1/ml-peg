@@ -66,6 +66,31 @@ def test_fake_param(mlip: tuple[str, Any]):
 '''
 
 
+STACKED_CALC_FILE = '''
+"""Fake benchmark parametrized over models and cases, logging each model run."""
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+OUT_PATH = Path(__file__).parent / "outputs"
+
+MODELS = {"model-a": None, "model-b": None}
+
+
+@pytest.mark.parametrize("mlip", MODELS.items())
+@pytest.mark.parametrize("case_idx", range(2))
+def test_fake_stacked(mlip: tuple[str, Any], case_idx: int):
+    """Pretend to run a calculation for one model and case."""
+    model_name, _model = mlip
+    out_dir = OUT_PATH / model_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "runs.txt", "a") as file:
+        file.write("run\\n")
+'''
+
+
 YAML_CALC_FILE = '''
 """Fake benchmark selecting models named in models_list.txt from models.yml."""
 
@@ -253,6 +278,39 @@ def test_parametrized_calcs_skipped_per_model(pytester: Pytester):
     result = pytester.runpytest_subprocess("calc_param.py", "--force-calcs")
     result.assert_outcomes(passed=2)
     assert _runs(pytester, "model-a") == 3
+
+
+def test_stacked_parametrized_calcs_skipped_per_case(pytester: Pytester):
+    """Test calculations stacking extra parameters on the model track each case."""
+    pytester.makeconftest(CALCS_CONFTEST.read_text())
+    pytester.makepyfile(calc_stacked=STACKED_CALC_FILE)
+
+    # Every model and case combination runs
+    result = pytester.runpytest_subprocess("calc_stacked.py")
+    result.assert_outcomes(passed=4)
+    assert _runs(pytester, "model-a") == 2
+    assert _runs(pytester, "model-b") == 2
+
+    # Completion is marked per case, not once per model
+    marker_file = pytester.path / "outputs" / "model-a" / completion.MARKER_FILENAME
+    marker = json.loads(marker_file.read_text())
+    assert set(marker) == {
+        "test_fake_stacked[case_idx=0]",
+        "test_fake_stacked[case_idx=1]",
+    }
+
+    # Unchanged inputs: nothing re-runs
+    result = pytester.runpytest_subprocess("calc_stacked.py")
+    result.assert_outcomes(skipped=4)
+    assert _runs(pytester, "model-a") == 2
+
+    # One case's marker missing for one model: only that case re-runs
+    del marker["test_fake_stacked[case_idx=1]"]
+    marker_file.write_text(json.dumps(marker))
+    result = pytester.runpytest_subprocess("calc_stacked.py")
+    result.assert_outcomes(passed=1, skipped=3)
+    assert _runs(pytester, "model-a") == 3
+    assert _runs(pytester, "model-b") == 2
 
 
 def test_yaml_changes_invalidate_only_changed_models(pytester: Pytester):
