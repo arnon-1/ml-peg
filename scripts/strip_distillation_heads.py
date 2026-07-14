@@ -101,6 +101,11 @@ def strip_model(src: Path, dst: Path) -> str:
         action = "copied"
 
     os.replace(tmp, dst)
+    # Inherit the source mtime: the job script's YAML generation skips
+    # fresh-looking *_str.model files as possibly mid-copy, and a freshly
+    # stripped output of a settled source must not be excluded that way
+    stat = src.stat()
+    os.utime(dst, ns=(stat.st_atime_ns, stat.st_mtime_ns))
     return action
 
 

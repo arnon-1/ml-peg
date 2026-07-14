@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import time
 
+import pytest
 import torch
 
 SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "strip_distillation_heads.py"
@@ -58,6 +59,11 @@ def test_strips_and_copies(tmp_path):
         tmp_path / "distil.model", map_location="cpu", weights_only=False
     )
     assert torch.equal(stripped.weight, original.weight)
+
+    # Outputs inherit the source mtime, so the job script's YAML generation
+    # does not mistake freshly stripped models for mid-copy uploads
+    for name in ("plain_str.model", "distil_str.model"):
+        assert (tmp_path / name).stat().st_mtime == pytest.approx(OLD)
 
 
 def test_existing_outputs_never_regenerated(tmp_path):
