@@ -19,7 +19,7 @@
 #      ml-peg's completion markers (outputs/<model>/.completed.json) skip every
 #      (model, benchmark) pair that already finished with identical inputs, so
 #      only new models (or new/changed benchmarks) actually compute anything.
-#      Benchmarks marked slow/very_slow are EXCLUDED (RUN_SLOW=0 default): a
+#      Slow-marked benchmarks are included; very_slow ones stay excluded: a
 #      single test outlasting the walltime never writes its completion marker,
 #      so every later task would restart it from scratch. Completion is only
 #      tracked per (model, test), not mid-test.
@@ -79,10 +79,6 @@ HEAD=${HEAD:-omat_pbe}
 # Benchmarks to run (glob(s) relative to the repo root); override to test a
 # subset, e.g. CALCS="ml_peg/calcs/molecular_reactions/BH2O_36/calc_*.py"
 CALCS=${CALCS:-ml_peg/calcs/*/*/calc*}
-# Include slow-marked benchmarks (phonons, RDB7, NEBs, diatomics, ...). Leave
-# at 0: a single slow test can outlast the walltime and, with no completion
-# marker written, would rerun from scratch every resubmission.
-RUN_SLOW=${RUN_SLOW:-0}
 # Evaluate with torch.compile (adds compile_mode: default to every model's
 # kwargs). Each test compiles its own calculator; the inductor cache on /ptmp
 # amortises this across tests and tasks. CAUTION: compile has been seen to
@@ -119,7 +115,7 @@ export PYTHONPATH="$ML_PEG_REPO/scripts${PYTHONPATH:+:$PYTHONPATH}"
 echo "$(date): ml-peg 2k-model sweep, array task ${SLURM_ARRAY_TASK_ID:-?} on $(hostname)"
 echo "Models dir: $MODELS_DIR"
 echo "Models YAML: $MODELS_YML"
-echo "Settings: RUN_SLOW=$RUN_SLOW COMPILE=$COMPILE HEAD=$HEAD CALCS=$CALCS"
+echo "Settings: COMPILE=$COMPILE HEAD=$HEAD CALCS=$CALCS"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'nvidia-smi not available')"
 
 # --- 0) Strip distillation heads (writes <name>_str.model siblings) ---
@@ -180,11 +176,8 @@ EOF
 # already ran with identical inputs. Capture pytest's exit status: some
 # benchmarks failing for some models is expected and should not abort the
 # task under set -e.
-SLOW_FLAG=""
-if [[ "$RUN_SLOW" == "1" ]]; then SLOW_FLAG="--run-slow"; fi
-
 pytest_status=0
-srun python -m pytest -v $CALCS -s $SLOW_FLAG \
+srun python -m pytest -v $CALCS -s --run-slow \
     -p mlpeg_job_lock --models-file "$MODELS_YML" || pytest_status=$?
 echo "$(date): pytest finished with exit status $pytest_status"
 echo "$(date): array task ${SLURM_ARRAY_TASK_ID:-?} done."
