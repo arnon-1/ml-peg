@@ -118,13 +118,10 @@ def plot_parity(
                     )
                 )
 
-            full_fig = fig.full_figure_for_development()
-            x_range = full_fig.layout.xaxis.range
-            y_range = full_fig.layout.yaxis.range
-
+            all_values = np.concatenate([np.ravel(value) for value in results.values()])
             lims = [
-                np.min([x_range, y_range]),  # min of both axes
-                np.max([x_range, y_range]),  # max of both axes
+                np.nanmin(all_values),  # min of both axes
+                np.nanmax(all_values),  # max of both axes
             ]
 
             fig.add_trace(
@@ -265,12 +262,9 @@ def cell_to_scatter(
                     )
 
                     # Add parity line
-                    full_fig = fig.full_figure_for_development()
-                    x_range = full_fig.layout.xaxis.range
-                    y_range = full_fig.layout.yaxis.range
                     lims = [
-                        np.min([x_range, y_range]),
-                        np.max([x_range, y_range]),
+                        np.nanmin([refs, preds]),
+                        np.nanmax([refs, preds]),
                     ]
                     fig.add_trace(
                         go.Scatter(
