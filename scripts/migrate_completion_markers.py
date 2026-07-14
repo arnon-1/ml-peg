@@ -7,7 +7,10 @@ their contents. Every marker written before the change therefore holds an
 outdated fingerprint, and all calculations would rerun.
 
 Run this script once per machine after pulling the change and before the next
-pytest run. Every marker entry whose fingerprint is valid under the old scheme
+pytest run, passing the same --models-file the pytest runs use (fingerprints
+include the model's configuration, so markers only match when the same model
+definitions are read). Every marker entry whose fingerprint is valid under the
+old scheme
 is rewritten to the new scheme; entries that match neither scheme are
 genuinely stale and are left untouched so they rerun. Before a marker is
 modified, its original content is backed up to `.completed_old.json` alongside
@@ -16,10 +19,12 @@ it (an existing backup is never overwritten). Safe to run repeatedly.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
 
+from ml_peg import models
 from ml_peg.calcs.utils.completion import (
     MARKER_FILENAME,
     _local_files,
@@ -63,7 +68,7 @@ def legacy_fingerprint(calc_dir: Path, model_name: str) -> str:
     return sha.hexdigest()
 
 
-def migrate(calcs_dir: Path = CALCS_DIR) -> dict[str, int]:
+def migrate(calcs_dir: Path | None = None) -> dict[str, int]:
     """
     Migrate all completion markers under a calculations directory.
 
@@ -71,6 +76,7 @@ def migrate(calcs_dir: Path = CALCS_DIR) -> dict[str, int]:
     ----------
     calcs_dir
         Directory searched recursively for `outputs/<model>/.completed.json`.
+        Default is the repository's calculations directory.
 
     Returns
     -------
@@ -78,6 +84,7 @@ def migrate(calcs_dir: Path = CALCS_DIR) -> dict[str, int]:
         Marker files scanned and unreadable, and entries migrated, already
         current, and left stale.
     """
+    calcs_dir = CALCS_DIR if calcs_dir is None else calcs_dir
     counts = dict.fromkeys(("markers", "migrated", "current", "stale", "unreadable"), 0)
     # Fingerprints per (calc_dir, model): markers hold one entry per test
     fingerprints: dict[tuple[Path, str], tuple[str, str]] = {}
@@ -129,8 +136,27 @@ def migrate(calcs_dir: Path = CALCS_DIR) -> dict[str, int]:
     return counts
 
 
-def main() -> None:
-    """Run the migration and print a summary."""
+def main(argv: list[str] | None = None) -> None:
+    """
+    Run the migration and print a summary.
+
+    Parameters
+    ----------
+    argv
+        Command line arguments. Default is `sys.argv[1:]`.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--models-file",
+        default=None,
+        help="Model definitions the pytest runs use (pytest's --models-file). "
+        "Default is models.yml in the models directory.",
+    )
+    args = parser.parse_args(argv)
+    if args.models_file:
+        models.models_file = args.models_file
+
+    print(f"Models file: {models.models_file}")
     counts = migrate()
     print(
         f"Scanned {counts['markers']} marker file(s): "

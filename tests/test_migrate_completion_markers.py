@@ -46,6 +46,7 @@ def scene(tmp_path, monkeypatch):
         out_path=calc_dir / "outputs",
         checkpoint=checkpoint,
         data_file=data_file,
+        models_yml=models_yml,
     )
 
 
@@ -145,6 +146,25 @@ def test_model_without_local_files_is_noop(scene):
     assert counts["migrated"] == 0
     assert marker.read_text() == original
     assert not (marker.parent / migrate_markers.BACKUP_FILENAME).exists()
+
+
+def test_main_models_file_option(scene, monkeypatch, capsys):
+    """Test --models-file selects the model definitions like pytest's option."""
+    legacy = migrate_markers.legacy_fingerprint(scene.calc_dir, "model-x")
+    marker = write_marker(scene.calc_dir, "model-x", legacy, [])
+
+    # Without the right models file, model-x's config is empty and the marker
+    # cannot migrate
+    monkeypatch.setattr(models, "models_file", scene.calcs_dir / "missing.yml")
+    monkeypatch.setattr(migrate_markers, "CALCS_DIR", scene.calcs_dir)
+
+    migrate_markers.main(["--models-file", str(scene.models_yml)])
+    output = capsys.readouterr().out
+    assert str(scene.models_yml) in output
+    assert "1 entr(y/ies) migrated" in output
+    assert json.loads(marker.read_text())["test_fake"][
+        "fingerprint"
+    ] == completion.calc_fingerprint(scene.calc_dir, "model-x")
 
 
 def test_corrupt_marker_reported_not_fatal(scene, capsys):
