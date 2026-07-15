@@ -105,6 +105,7 @@ if [[ "$MOCK" == 1 ]]; then
     ml_peg calc --mock-only --run-slow \
         --continue-on-collection-errors \
         --deselect "ml_peg/calcs/bulk_crystal/phonons/calc_phonons.py::test_phonons_ref" \
+        -p mlpeg_job_lock \
         > "$LOG_BASE.mock.log" 2>&1 || status=$?
     echo "$(date): mock calc step finished (status $status)"
 fi
