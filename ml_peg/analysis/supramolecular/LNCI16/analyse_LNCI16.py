@@ -8,7 +8,12 @@ from ase.io import read
 import pytest
 
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
-from ml_peg.analysis.utils.utils import get_struct_info, load_metrics_config, mae
+from ml_peg.analysis.utils.utils import (
+    deferred,
+    get_struct_info,
+    load_metrics_config,
+    mae,
+)
 from ml_peg.app import APP_ROOT
 from ml_peg.calcs import CALCS_ROOT
 from ml_peg.models import current_models
@@ -23,7 +28,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     info_keys=["system", "complex_charge"],
@@ -107,10 +114,10 @@ def get_is_charged() -> list[bool]:
     title="LNCI16 Interaction Energies",
     x_label="Predicted interaction energy / kcal/mol",
     y_label="Reference interaction energy / kcal/mol",
-    hoverdata={
-        "System": INFO["system"],
+    hoverdata=lambda: {
+        "System": struct_info()["system"],
         "Complex Atoms": get_atom_counts(),
-        "Charge": INFO["complex_charge"],
+        "Charge": struct_info()["complex_charge"],
         "Charged": get_is_charged(),
     },
 )
@@ -227,4 +234,6 @@ def test_lnci16(metrics: dict[str, dict]) -> None:
     metrics
         All LNCI16 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

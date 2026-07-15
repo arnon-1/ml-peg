@@ -11,6 +11,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -43,7 +44,8 @@ EXPERIMENTAL_DATA = {
 }
 
 
-INFO = get_struct_info(
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.traj",
     index=0,
@@ -87,8 +89,8 @@ def compute_density(fname, density_col=13):
     title="Densities",
     x_label="Predicted density / kcal/mol",
     y_label="Reference density / kcal/mol",
-    hoverdata={
-        "Labels": INFO["filenames"],
+    hoverdata=lambda: {
+        "Labels": struct_info()["filenames"],
     },
 )
 def water_density() -> dict[str, list]:
@@ -104,7 +106,7 @@ def water_density() -> dict[str, list]:
     ref_stored = False
 
     for model_name in MODELS:
-        for label in INFO["filenames"]:
+        for label in struct_info()["filenames"]:
             atoms = Trajectory(CALC_PATH / model_name / f"{label}.traj")[-1]
 
             results[model_name].append(
@@ -177,4 +179,6 @@ def test_water_density(metrics: dict[str, dict]) -> None:
     metrics
         All new benchmark metric names and dictionary of values for each model.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

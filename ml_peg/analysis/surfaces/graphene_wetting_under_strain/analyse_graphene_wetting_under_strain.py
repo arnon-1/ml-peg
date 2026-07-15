@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
+from typing import Any
 
 from ase import Atoms
 import ase.io
@@ -15,7 +17,12 @@ from scipy.optimize import curve_fit
 import yaml
 
 from ml_peg.analysis.utils.decorators import build_table
-from ml_peg.analysis.utils.utils import get_struct_info, load_metrics_config, mae
+from ml_peg.analysis.utils.utils import (
+    deferred,
+    get_struct_info,
+    load_metrics_config,
+    mae,
+)
 from ml_peg.app import APP_ROOT
 from ml_peg.calcs import CALCS_ROOT
 from ml_peg.models import current_models
@@ -30,12 +37,52 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-with open(CALC_PATH / "database_info.yml") as fp:
-    DATABASE_INFO = yaml.safe_load(fp)
-ORIENTATIONS = DATABASE_INFO["orientations"]
-STRAINS = DATABASE_INFO["strains"]
 
-INFO = get_struct_info(
+@cache
+def database_info() -> dict[str, Any]:
+    """
+    Get database info from calculation outputs.
+
+    Deferred to run time so that missing calculation outputs cannot break
+    pytest collection at import.
+
+    Returns
+    -------
+    dict[str, Any]
+        Database info, including orientations and strains.
+    """
+    with open(CALC_PATH / "database_info.yml") as fp:
+        return yaml.safe_load(fp)
+
+
+@cache
+def orientations() -> list[str]:
+    """
+    Get water molecule orientations.
+
+    Returns
+    -------
+    list[str]
+        Water molecule orientations.
+    """
+    return database_info()["orientations"]
+
+
+@cache
+def strains() -> list[str]:
+    """
+    Get strain conditions.
+
+    Returns
+    -------
+    list[str]
+        Strain conditions.
+    """
+    return database_info()["strains"]
+
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     write_info=True,
     write_structs=False,
@@ -204,12 +251,12 @@ def processed_data() -> dict[str, list]:
         if not model_dir.exists():
             continue
 
-        for orientation in ORIENTATIONS:
+        for orientation in orientations():
             if not ref_stored:
                 results["ref"][orientation] = {}
             results[model][orientation] = {}
 
-            for strain in STRAINS:
+            for strain in strains():
                 if not ref_stored:
                     results["ref"][orientation][strain] = {
                         "energies": [],
@@ -284,16 +331,16 @@ def generate_plots_for_app(processed_data) -> None:
     # First plot: 3x3 grid of adsorption energies across all orientations and strains
     subplot_titles = [
         f"{orientation}, {strain[1:5]}% strain"
-        for strain in STRAINS
-        for orientation in ORIENTATIONS
+        for strain in strains()
+        for orientation in orientations()
     ]
     fig = make_subplots(
         rows=3,
         cols=3,
         subplot_titles=subplot_titles,
     )
-    for i, orientation in enumerate(ORIENTATIONS):
-        for j, strain in enumerate(STRAINS):
+    for i, orientation in enumerate(orientations()):
+        for j, strain in enumerate(strains()):
             fig.add_trace(
                 go.Scatter(
                     x=processed_data["distances"],
@@ -309,8 +356,8 @@ def generate_plots_for_app(processed_data) -> None:
                 col=(i + 1),
             )
     for iter, model in enumerate(MODELS):
-        for i, orientation in enumerate(ORIENTATIONS):
-            for j, strain in enumerate(STRAINS):
+        for i, orientation in enumerate(orientations()):
+            for j, strain in enumerate(strains()):
                 color = DEFAULT_PLOTLY_COLORS[iter % len(DEFAULT_PLOTLY_COLORS)]
                 fig.add_trace(
                     go.Scatter(
@@ -347,16 +394,16 @@ def generate_plots_for_app(processed_data) -> None:
     fig = make_subplots(
         rows=1,
         cols=3,
-        subplot_titles=ORIENTATIONS,
+        subplot_titles=orientations(),
     )
-    strains_to_plot = [float(strain[1:5]) for strain in STRAINS]
-    for i, orientation in enumerate(ORIENTATIONS):
+    strains_to_plot = [float(strain[1:5]) for strain in strains()]
+    for i, orientation in enumerate(orientations()):
         fig.add_trace(
             go.Scatter(
                 x=strains_to_plot,
                 y=[
                     processed_data["ref"][orientation][strain]["params"][0]
-                    for strain in STRAINS
+                    for strain in strains()
                 ],
                 name="Reference",
                 legendgroup="Reference",
@@ -370,13 +417,13 @@ def generate_plots_for_app(processed_data) -> None:
         )
     for iter, model in enumerate(MODELS):
         color = DEFAULT_PLOTLY_COLORS[iter % len(DEFAULT_PLOTLY_COLORS)]
-        for i, orientation in enumerate(ORIENTATIONS):
+        for i, orientation in enumerate(orientations()):
             fig.add_trace(
                 go.Scatter(
                     x=strains_to_plot,
                     y=[
                         processed_data[model][orientation][strain]["params"][0]
-                        for strain in STRAINS
+                        for strain in strains()
                     ],
                     name=model,
                     legendgroup=model,
@@ -406,15 +453,15 @@ def generate_plots_for_app(processed_data) -> None:
     fig = make_subplots(
         rows=1,
         cols=3,
-        subplot_titles=ORIENTATIONS,
+        subplot_titles=orientations(),
     )
-    for i, orientation in enumerate(ORIENTATIONS):
+    for i, orientation in enumerate(orientations()):
         fig.add_trace(
             go.Scatter(
                 x=strains_to_plot,
                 y=[
                     processed_data["ref"][orientation][strain]["params"][1]
-                    for strain in STRAINS
+                    for strain in strains()
                 ],
                 name="Reference",
                 legendgroup="Reference",
@@ -428,13 +475,13 @@ def generate_plots_for_app(processed_data) -> None:
         )
     for iter, model in enumerate(MODELS):
         color = DEFAULT_PLOTLY_COLORS[iter % len(DEFAULT_PLOTLY_COLORS)]
-        for i, orientation in enumerate(ORIENTATIONS):
+        for i, orientation in enumerate(orientations()):
             fig.add_trace(
                 go.Scatter(
                     x=strains_to_plot,
                     y=[
                         processed_data[model][orientation][strain]["params"][1]
-                        for strain in STRAINS
+                        for strain in strains()
                     ],
                     name=model,
                     legendgroup=model,
@@ -481,15 +528,15 @@ def all_adsorption_energies_mae(processed_data) -> dict[str, float]:
     results = {}
 
     ref = []
-    for orientation in ORIENTATIONS:
-        for strain in STRAINS:
+    for orientation in orientations():
+        for strain in strains():
             for i in range(len(processed_data["distances"])):
                 ref.append(processed_data["ref"][orientation][strain]["energies"][i])
 
     for model in MODELS:
         prediction = []
-        for orientation in ORIENTATIONS:
-            for strain in STRAINS:
+        for orientation in orientations():
+            for strain in strains():
                 for i in range(len(processed_data["distances"])):
                     prediction.append(
                         processed_data[model][orientation][strain]["energies"][i]
@@ -517,14 +564,14 @@ def binding_energies_mae(processed_data) -> dict[str, float]:
     results = {}
 
     ref = []
-    for orientation in ORIENTATIONS:
-        for strain in STRAINS:
+    for orientation in orientations():
+        for strain in strains():
             ref.append(processed_data["ref"][orientation][strain]["params"][0])
 
     for model in MODELS:
         prediction = []
-        for orientation in ORIENTATIONS:
-            for strain in STRAINS:
+        for orientation in orientations():
+            for strain in strains():
                 prediction.append(
                     processed_data[model][orientation][strain]["params"][0]
                 )
@@ -554,14 +601,14 @@ def binding_lengths_mae(processed_data) -> dict[str, float]:
     results = {}
 
     ref = []
-    for orientation in ORIENTATIONS:
-        for strain in STRAINS:
+    for orientation in orientations():
+        for strain in strains():
             ref.append(processed_data["ref"][orientation][strain]["params"][1])
 
     for model in MODELS:
         prediction = []
-        for orientation in ORIENTATIONS:
-            for strain in STRAINS:
+        for orientation in orientations():
+            for strain in strains():
                 prediction.append(
                     processed_data[model][orientation][strain]["params"][1]
                 )
@@ -625,4 +672,6 @@ def test_graphene_wetting_under_strain(
     generate_plots_for_app
         Hook for PyTest fixture.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

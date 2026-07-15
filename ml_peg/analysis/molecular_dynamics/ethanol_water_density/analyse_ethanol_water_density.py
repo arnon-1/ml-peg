@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
+from typing import Any
 from warnings import warn
 
 import numpy as np
@@ -34,18 +36,31 @@ M_ETOH = 46.06844  # g/mol
 LOG_INTERVAL_PS = 0.1
 EQUILIB_TIME_PS = 500
 
-OUT_PATH.mkdir(parents=True, exist_ok=True)
 
-# Save per-composition elemental info (and composition dir labels) for app filtering.
-INFO = get_struct_info(
-    calc_path=CALC_PATH,
-    glob_pattern="*/*.traj",
-    index=0,
-    write_info=True,
-    write_structs=False,  # all files are "mock.traj", flat write would collide
-    out_path=OUT_PATH,
-    include_dirs=True,
-)
+@cache
+def struct_info() -> dict[str, Any]:
+    """
+    Get structure info from calculation outputs, writing app data files.
+
+    Saves per-composition elemental info (and composition dir labels) for app
+    filtering. Deferred to run time so that missing calculation outputs cannot
+    break pytest collection at import.
+
+    Returns
+    -------
+    dict[str, Any]
+        Structure info for all systems.
+    """
+    OUT_PATH.mkdir(parents=True, exist_ok=True)
+    return get_struct_info(
+        calc_path=CALC_PATH,
+        glob_pattern="*/*.traj",
+        index=0,
+        write_info=True,
+        write_structs=False,  # all files are "mock.traj", flat write would collide
+        out_path=OUT_PATH,
+        include_dirs=True,
+    )
 
 
 def weight_to_mole_fraction(w):
@@ -528,4 +543,6 @@ def test_ethanol_water_density(metrics: dict[str, dict], curve_plots: None) -> N
     None
         The test validates fixture execution and writes artifacts.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

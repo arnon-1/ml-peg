@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 from ase import units
@@ -13,6 +14,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
 )
@@ -31,7 +33,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-INFO = get_struct_info(
+
+write_struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*/*.xyz",
     index=0,
@@ -39,6 +43,7 @@ INFO = get_struct_info(
     write_structs=False,
     out_path=OUT_PATH,
 )
+
 
 # Unit conversion
 EV_TO_KCAL_PER_MOL = units.mol / units.kcal
@@ -48,9 +53,13 @@ ALLOWED_CHARGES = (0,)
 ALLOWED_MULTIPLICITY = (1,)
 
 
+@cache
 def structure_info() -> dict[str, dict[str, float] | list | NDArray]:
     """
     Get info from all stored structures.
+
+    Deferred to run time so that missing calculation outputs cannot break
+    pytest collection at import.
 
     Returns
     -------
@@ -95,20 +104,17 @@ def structure_info() -> dict[str, dict[str, float] | list | NDArray]:
     return info
 
 
-INFO = structure_info()
-
-
 @pytest.fixture
 @plot_parity(
     filename=OUT_PATH / "figure_rel_energies.json",
     title="Relative energies",
     x_label="Predicted relative energy / kcal/mol",
     y_label="Reference relative energy / kcal/mol",
-    hoverdata={
-        "Subset": INFO["subsets"],
-        "Category": INFO["categories"],
-        "System": INFO["systems"],
-        "Excluded": INFO["excluded"],
+    hoverdata=lambda: {
+        "Subset": structure_info()["subsets"],
+        "Category": structure_info()["categories"],
+        "System": structure_info()["systems"],
+        "Excluded": structure_info()["excluded"],
     },
 )
 def rel_energies() -> dict[str, list[float]]:
@@ -196,8 +202,9 @@ def subset_errors(all_errors: dict[str, list[float]]) -> dict[str, dict[str, flo
         results[model_name] = {}
 
         # Filter excluded systems from subsets
-        errors = all_errors[model_name][np.logical_not(INFO["excluded"])]
-        subsets = INFO["subsets"][np.logical_not(INFO["excluded"])]
+        excluded = structure_info()["excluded"]
+        errors = all_errors[model_name][np.logical_not(excluded)]
+        subsets = structure_info()["subsets"][np.logical_not(excluded)]
 
         for subset in set(subsets):
             results[model_name][subset] = np.mean(errors[subsets == subset])
@@ -227,11 +234,11 @@ def category_errors(
     for model_name in MODELS:
         results[model_name] = {}
 
-        all_categories = INFO["categories"]
-        all_subsets = INFO["subsets"]
-        all_weights = INFO["weights"]
-        all_counts = INFO["counts"]
-        excluded = INFO["excluded"]
+        all_categories = structure_info()["categories"]
+        all_subsets = structure_info()["subsets"]
+        all_weights = structure_info()["weights"]
+        all_counts = structure_info()["counts"]
+        excluded = structure_info()["excluded"]
 
         # Filter excluded systems
         categories = all_categories[np.logical_not(excluded)]
@@ -278,10 +285,10 @@ def weighted_error(subset_errors: dict[str, dict[str, float]]) -> dict[str, floa
     for model_name in MODELS:
         results[model_name] = {}
 
-        all_subsets = INFO["subsets"]
-        all_weights = INFO["weights"]
-        all_counts = INFO["counts"]
-        excluded = INFO["excluded"]
+        all_subsets = structure_info()["subsets"]
+        all_weights = structure_info()["weights"]
+        all_counts = structure_info()["counts"]
+        excluded = structure_info()["excluded"]
 
         # Filter all non-excluded subsets
         filtered_subsets = np.unique(all_subsets[np.logical_not(excluded)])
@@ -351,4 +358,6 @@ def test_gmtkn55(metrics):
     metrics
         All GMTKN55 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    write_struct_info()
     return

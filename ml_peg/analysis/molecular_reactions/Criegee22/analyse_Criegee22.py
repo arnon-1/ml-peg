@@ -15,6 +15,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -36,7 +37,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     include_filenames=True,
     write_info=True,
@@ -51,8 +54,8 @@ INFO = get_struct_info(
     title="Reaction barriers",
     x_label="Predicted barrier / kcal/mol",
     y_label="Reference barrier / kcal/mol",
-    hoverdata={
-        "Labels": INFO["filenames"],
+    hoverdata=lambda: {
+        "Labels": struct_info()["filenames"],
     },
 )
 def barrier_heights() -> dict[str, list]:
@@ -67,8 +70,10 @@ def barrier_heights() -> dict[str, list]:
     results = {"ref": []} | {mlip: [] for mlip in MODELS}
     ref_stored = False
 
+    filenames = struct_info()["filenames"]
+
     for model_name in MODELS:
-        for label in INFO["filenames"]:
+        for label in filenames:
             structs = read(CALC_PATH / model_name / f"{label}.xyz", index=":")
 
             results[model_name].append(
@@ -143,4 +148,6 @@ def test_criegee22_barriers(metrics: dict[str, dict]) -> None:
     metrics
         All new benchmark metric names and dictionary of values for each model.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

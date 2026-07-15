@@ -8,7 +8,12 @@ from ase.io import read, write
 import pytest
 
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
-from ml_peg.analysis.utils.utils import get_struct_info, load_metrics_config, mae
+from ml_peg.analysis.utils.utils import (
+    deferred,
+    get_struct_info,
+    load_metrics_config,
+    mae,
+)
 from ml_peg.app import APP_ROOT
 from ml_peg.calcs import CALCS_ROOT
 from ml_peg.models import current_models
@@ -24,7 +29,8 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
 )
 
 
-INFO = get_struct_info(
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     index="0",
@@ -41,8 +47,8 @@ INFO = get_struct_info(
     title="Elemental TM Vacancy Formation Energies",
     x_label="Predicted Vacancy Formation Energy / eV",
     y_label="Reference Vacancy Formation Energy / eV",
-    hoverdata={
-        "System": INFO["system"],
+    hoverdata=lambda: {
+        "System": struct_info()["system"],
     },
 )
 def vacancy_formation_energies() -> dict[str, list]:
@@ -155,4 +161,6 @@ def test_vacancy_formation_energies(metrics: dict[str, dict]) -> None:
     metrics
         All elemental TM vacancy formation energies metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

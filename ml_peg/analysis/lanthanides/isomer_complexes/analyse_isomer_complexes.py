@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 from ase import units
@@ -9,7 +10,12 @@ from ase.io import read, write
 import pytest
 
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
-from ml_peg.analysis.utils.utils import get_struct_info, load_metrics_config, mae
+from ml_peg.analysis.utils.utils import (
+    deferred,
+    get_struct_info,
+    load_metrics_config,
+    mae,
+)
 from ml_peg.app import APP_ROOT
 from ml_peg.calcs import CALCS_ROOT
 from ml_peg.models import current_models
@@ -26,7 +32,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
 
 EV_TO_KCAL = units.mol / units.kcal
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     write_info=True,
     write_structs=False,
@@ -34,14 +42,26 @@ INFO = get_struct_info(
     out_path=OUT_PATH,
 )
 
-LABELS = {}
-for stem in INFO["filenames"]:
-    system = stem.split("_iso")[0]
-    parts = stem.split("_")
-    isomer = parts[2]
-    LABELS.setdefault(system, []).append(isomer)
-for k in LABELS:
-    LABELS[k] = sorted(LABELS[k])
+
+@cache
+def labels() -> dict[str, list[str]]:
+    """
+    Get sorted isomer labels for each system.
+
+    Returns
+    -------
+    dict[str, list[str]]
+        Sorted isomer labels keyed by system.
+    """
+    system_labels: dict[str, list[str]] = {}
+    for stem in struct_info()["filenames"]:
+        system = stem.split("_iso")[0]
+        parts = stem.split("_")
+        isomer = parts[2]
+        system_labels.setdefault(system, []).append(isomer)
+    for k in system_labels:
+        system_labels[k] = sorted(system_labels[k])
+    return system_labels
 
 
 def build_hoverdata() -> dict[str, list[str]]:
@@ -54,8 +74,8 @@ def build_hoverdata() -> dict[str, list[str]]:
         Dictionary with "System" and "Isomer" keys for hover information.
     """
     return {
-        "System": [stem.split("_iso")[0] for stem in INFO["filenames"]],
-        "Isomer": [stem.split("_")[2] for stem in INFO["filenames"]],
+        "System": [stem.split("_iso")[0] for stem in struct_info()["filenames"]],
+        "Isomer": [stem.split("_")[2] for stem in struct_info()["filenames"]],
     }
 
 
@@ -65,7 +85,7 @@ def build_hoverdata() -> dict[str, list[str]]:
     title="Lanthanide isomer relative energies",
     x_label="Model Delta E (kcal/mol)",
     y_label="r2SCAN-3c Delta E (kcal/mol)",
-    hoverdata=build_hoverdata(),
+    hoverdata=build_hoverdata,
 )
 def isomer_relative_energies() -> dict[str, list]:
     """
@@ -76,6 +96,9 @@ def isomer_relative_energies() -> dict[str, list]:
     dict[str, list]
         Reference and per-model relative energies.
     """
+    # Calling labels() also writes app info files as a side effect via struct_info()
+    system_labels = labels()
+
     results = {"ref": []} | {mlip: [] for mlip in MODELS}
     ref_stored = False
 
@@ -83,17 +106,17 @@ def isomer_relative_energies() -> dict[str, list]:
         model_dir = CALC_PATH / model_name
         if not model_dir.exists():
             # Model directory doesn't exist, fill with None
-            total = sum(len(v) for v in LABELS.values())
+            total = sum(len(v) for v in system_labels.values())
             results[model_name] = [None] * total
             continue
 
         structs_dir = OUT_PATH / model_name
         structs_dir.mkdir(parents=True, exist_ok=True)
 
-        for system in LABELS:
+        for system in system_labels:
             pred_energies = []
             ref_energies = []
-            for isomer in LABELS[system]:
+            for isomer in system_labels[system]:
                 xyz_path = model_dir / f"{system}_{isomer}.xyz"
                 atoms = read(xyz_path)
 
@@ -182,4 +205,6 @@ def test_isomer_complexes(metrics: dict[str, dict]) -> None:
     metrics
         All lanthanide isomer complex metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

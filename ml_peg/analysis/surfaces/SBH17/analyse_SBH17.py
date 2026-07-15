@@ -10,6 +10,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -29,8 +30,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-# Extract system metadata from mock calculation
-SYSTEM_INFO = get_struct_info(
+
+system_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     info_keys=["system"],
     write_info=True,
@@ -45,8 +47,8 @@ SYSTEM_INFO = get_struct_info(
     title="SBH17 dissociative chemisorption barriers",
     x_label="Predicted barrier / eV",
     y_label="Reference barrier / eV",
-    hoverdata={
-        "System": SYSTEM_INFO["system"],
+    hoverdata=lambda: {
+        "System": system_info()["system"],
     },
 )
 def surface_barriers() -> dict[str, list]:
@@ -156,4 +158,6 @@ def test_sbh17(metrics: dict[str, dict]) -> None:
     metrics
         All SBH17 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    system_info()
     return

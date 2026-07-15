@@ -13,6 +13,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_density_scatter
 from ml_peg.analysis.utils.utils import (
     build_density_inputs,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -42,7 +43,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
 ENERGY_OUTLIER_MIN = -25
 ENERGY_OUTLIER_MAX = 25
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*/*.xyz",
     write_info=True,
@@ -428,4 +431,6 @@ def test_high_pressure_relaxation(
     energy_density
         Triggers per-pressure energy density plot generation.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

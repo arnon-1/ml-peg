@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 from ase.eos import EquationOfState, birchmurnaghan
@@ -12,7 +13,7 @@ import plotly.graph_objects as go
 import pytest
 
 from ml_peg.analysis.utils.decorators import build_table, plot_periodic_table
-from ml_peg.analysis.utils.utils import get_struct_info, load_metrics_config
+from ml_peg.analysis.utils.utils import deferred, get_struct_info, load_metrics_config
 from ml_peg.app import APP_ROOT
 from ml_peg.calcs import CALCS_ROOT
 from ml_peg.models import current_models
@@ -27,7 +28,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     write_info=True,
@@ -36,7 +39,19 @@ INFO = get_struct_info(
     out_path=OUT_PATH,
     include_filenames=True,
 )
-ELEMENTS = [filename.split("_")[0] for filename in INFO["filenames"]]
+
+
+@cache
+def elements() -> list[str]:
+    """
+    Get the element symbols covered by the benchmark.
+
+    Returns
+    -------
+    list[str]
+        Element symbols derived from the structure filenames.
+    """
+    return [filename.split("_")[0] for filename in struct_info()["filenames"]]
 
 
 def _fit_bm_clean(volumes: np.ndarray, energies: np.ndarray) -> tuple | None:
@@ -351,7 +366,7 @@ def eos_stats() -> dict[tuple[str, str], dict[str, float]]:
         if not model_dir.exists():
             continue
 
-        for element in ELEMENTS:
+        for element in elements():
             dft_csv = CALC_PATH / f"{element}_eos_DFT.csv"
             dft_data = pd.read_csv(dft_csv, comment="#")
 
@@ -452,7 +467,7 @@ def get_metric_per_element(model, eos_stats, metric_name):
         corresponding metric values for the specified model.
     """
     return {
-        el: eos_stats.get((model, el), {}).get(metric_name, np.nan) for el in ELEMENTS
+        el: eos_stats.get((model, el), {}).get(metric_name, np.nan) for el in elements()
     }
 
 
@@ -526,7 +541,7 @@ def delta(
     for model_name in MODELS:
         values = [
             eos_stats[(model_name, el)]["Δ"]
-            for el in ELEMENTS
+            for el in elements()
             if (model_name, el) in eos_stats
         ]
         results[model_name] = float(np.nanmean(values)) if values else None
@@ -554,7 +569,7 @@ def phase_diff_eos_mae(
     for model_name in MODELS:
         values = [
             eos_stats[(model_name, el)]["Phase energy"]
-            for el in ELEMENTS
+            for el in elements()
             if (model_name, el) in eos_stats
         ]
         results[model_name] = float(np.nanmean(values)) if values else None
@@ -582,7 +597,7 @@ def correct_stability(
     for model_name in MODELS:
         values = [
             eos_stats[(model_name, el)]["Phase stability"]
-            for el in ELEMENTS
+            for el in elements()
             if (model_name, el) in eos_stats
         ]
         results[model_name] = float(np.nanmean(values)) if values else None
@@ -637,7 +652,7 @@ def eos_figures(eos_stats: dict[tuple[str, str], dict[str, float]]) -> None:
         model-element pairs have data).
     """
     for model in MODELS:
-        for element in ELEMENTS:
+        for element in elements():
             if (model, element) not in eos_stats:
                 continue
             fig = plot_eos_figure(model, element)
@@ -665,4 +680,6 @@ def test_equation_of_state(
     eos_figures
         Per-model-element EOS curve figures (side-effect only).
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

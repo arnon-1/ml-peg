@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
+from typing import Any
 
 from ase import units
 from ase.io import read, write
@@ -35,16 +37,30 @@ EV_TO_KCAL_PER_MOL = units.mol / units.kcal
 KJ_PER_MOL_TO_KCAL_PER_MOL = units.kJ / units.kcal
 
 
-INFO = get_struct_info(
-    calc_path=CALC_PATH,
-    glob_pattern="**/crystal*.xyz",
-    info_keys=["polymorph_name"],
-    write_info=True,
-    write_structs=True,
-    out_path=OUT_PATH,
-    include_dirs=True,
-)
-INFO["systems"] = sorted(set(INFO["dirs"]))
+@cache
+def struct_info() -> dict[str, Any]:
+    """
+    Get structure info from calculation outputs, writing app data files.
+
+    Deferred to run time so that missing calculation outputs cannot break
+    pytest collection at import.
+
+    Returns
+    -------
+    dict[str, Any]
+        Structure info for all systems.
+    """
+    info = get_struct_info(
+        calc_path=CALC_PATH,
+        glob_pattern="**/crystal*.xyz",
+        info_keys=["polymorph_name"],
+        write_info=True,
+        write_structs=True,
+        out_path=OUT_PATH,
+        include_dirs=True,
+    )
+    info["systems"] = sorted(set(info["dirs"]))
+    return info
 
 
 @pytest.fixture
@@ -82,7 +98,8 @@ def lattice_energies_raw() -> tuple[
     - Structure files are written to OUT_PATH for each model and system
     """
     # Initialize result dictionaries: absolute and relative lattice energies
-    systems = INFO["systems"]
+    # Calling struct_info() also writes app structure/info files as a side effect
+    systems = struct_info()["systems"]
     results = {"ref": []} | {mlip: [] for mlip in MODELS}
     results_relative = {"ref": []} | {mlip: [] for mlip in MODELS}
     results_absolute_small_rigid_molecules = {"ref": []} | {mlip: [] for mlip in MODELS}
@@ -279,8 +296,8 @@ def lattice_energies_raw() -> tuple[
     title="CPOSS209 Absolute Lattice Energies (All Polymorphs)",
     x_label="Predicted lattice energy / kcal/mol",
     y_label="Reference lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def absolute_lattice_energies(
@@ -324,8 +341,8 @@ def absolute_lattice_energies(
     title="CPOSS209 Relative Lattice Energies (All Polymorphs)",
     x_label="Predicted relative lattice energy / kcal/mol",
     y_label="Reference relative lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def relative_lattice_energies(
@@ -369,8 +386,8 @@ def relative_lattice_energies(
     title="CPOSS209 Absolute Lattice Energies for Small Rigid Molecules",
     x_label="Predicted lattice energy / kcal/mol",
     y_label="Reference lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def absolute_lattice_energies_small_rigid_molecules(
@@ -415,8 +432,8 @@ def absolute_lattice_energies_small_rigid_molecules(
     title="CPOSS209 Relative Lattice Energies for Small Rigid Molecules",
     x_label="Predicted relative lattice energy / kcal/mol",
     y_label="Reference relative lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def relative_lattice_energies_small_rigid_molecules(
@@ -461,8 +478,8 @@ def relative_lattice_energies_small_rigid_molecules(
     title="CPOSS209 Absolute Lattice Energies for Carbamazepine Family",
     x_label="Predicted lattice energy / kcal/mol",
     y_label="Reference lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def absolute_lattice_energies_carbamazepine_family(
@@ -507,8 +524,8 @@ def absolute_lattice_energies_carbamazepine_family(
     title="CPOSS209 Relative Lattice Energies for Carbamazepine Family",
     x_label="Predicted relative lattice energy / kcal/mol",
     y_label="Reference relative lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def relative_lattice_energies_carbamazepine_family(
@@ -553,8 +570,8 @@ def relative_lattice_energies_carbamazepine_family(
     title="CPOSS209 Absolute Lattice Energies for Fenamate Family",
     x_label="Predicted lattice energy / kcal/mol",
     y_label="Reference lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def absolute_lattice_energies_fenamate_family(
@@ -599,8 +616,8 @@ def absolute_lattice_energies_fenamate_family(
     title="CPOSS209 Relative Lattice Energies for Fenamate Family",
     x_label="Predicted relative lattice energy / kcal/mol",
     y_label="Reference relative lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def relative_lattice_energies_fenamate_family(
@@ -646,8 +663,8 @@ def relative_lattice_energies_fenamate_family(
     title="CPOSS209 Absolute Lattice Energies for Small Drug Molecule Family",
     x_label="Predicted lattice energy / kcal/mol",
     y_label="Reference lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def absolute_lattice_energies_small_drug_molecule_family(
@@ -693,8 +710,8 @@ def absolute_lattice_energies_small_drug_molecule_family(
     title="CPOSS209 Relative Lattice Energies for Small Drug Molecule Family",
     x_label="Predicted relative lattice energy / kcal/mol",
     y_label="Reference relative lattice energy / kcal/mol",
-    hoverdata={
-        "Crystal": INFO["polymorph_name"],
+    hoverdata=lambda: {
+        "Crystal": struct_info()["polymorph_name"],
     },
 )
 def relative_lattice_energies_small_drug_molecule_family(
@@ -995,4 +1012,6 @@ def test_cposs209(metrics: dict[str, dict]) -> None:
     metrics
         All CPOSS209 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 from ase.io import read, write
@@ -11,6 +12,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -28,7 +30,9 @@ OUT_PATH = APP_ROOT / "data" / "surfaces" / "OC157"
 METRICS_CONFIG_PATH = Path(__file__).with_name("metrics.yml")
 DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, _ = load_metrics_config(METRICS_CONFIG_PATH)
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     index=":",
@@ -39,7 +43,18 @@ INFO = get_struct_info(
     out_path=OUT_PATH,
 )
 
-N_SYSTEMS = len(INFO["filenames"])
+
+@cache
+def n_systems() -> int:
+    """
+    Get number of OC157 systems.
+
+    Returns
+    -------
+    int
+        Number of systems.
+    """
+    return len(struct_info()["filenames"])
 
 
 def get_relative_energies(energies: list) -> list:
@@ -63,7 +78,17 @@ def get_relative_energies(energies: list) -> list:
     ]
 
 
-LABELS = ["E_2 - E_1", "E_3 - E_2", "E_3 - E_2"] * N_SYSTEMS
+@cache
+def labels() -> list[str]:
+    """
+    Get relative energy labels for all triplets.
+
+    Returns
+    -------
+    list[str]
+        Relative energy labels for all systems.
+    """
+    return ["E_2 - E_1", "E_3 - E_2", "E_3 - E_2"] * n_systems()
 
 
 @pytest.fixture
@@ -72,9 +97,9 @@ LABELS = ["E_2 - E_1", "E_3 - E_2", "E_3 - E_2"] * N_SYSTEMS
     title="Relative energies",
     x_label="Predicted relative energy / eV",
     y_label="Reference relative energy / eV",
-    hoverdata={
-        "Composition": INFO["composition"],
-        "Labels": LABELS,
+    hoverdata=lambda: {
+        "Composition": struct_info()["composition"],
+        "Labels": labels(),
     },
 )
 def relative_energies() -> dict[str, list]:
@@ -208,4 +233,6 @@ def test_oc157(metrics: dict[str, dict]) -> None:
     metrics
         All OC157 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

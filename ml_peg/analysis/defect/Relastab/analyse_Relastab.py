@@ -11,7 +11,7 @@ import pytest
 from scipy.stats import spearmanr
 
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
-from ml_peg.analysis.utils.utils import get_struct_info, load_metrics_config
+from ml_peg.analysis.utils.utils import deferred, get_struct_info, load_metrics_config
 from ml_peg.app import APP_ROOT
 from ml_peg.calcs import CALCS_ROOT
 from ml_peg.models import current_models
@@ -26,8 +26,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-# Extract system metadata from mock calculation
-SYSTEM_INFO = get_struct_info(
+
+system_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     include_filenames=True,
@@ -93,9 +94,9 @@ def grouped_data() -> dict[str, dict[str, list[dict]]]:
     title="Relastab Energies (Shifted per subset)",
     x_label="Predicted Energy (Shifted) / eV",
     y_label="Reference Energy (Shifted) / eV",
-    hoverdata={
-        "System": SYSTEM_INFO["filenames"],
-        "Subset": SYSTEM_INFO["subset"],
+    hoverdata=lambda: {
+        "System": system_info()["filenames"],
+        "Subset": system_info()["subset"],
     },
 )
 def stability_energies(grouped_data) -> dict[str, list]:
@@ -315,4 +316,6 @@ def test_relastab_analysis(
     stability_energies
         Parity plot data for shifted energies.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    system_info()
     return

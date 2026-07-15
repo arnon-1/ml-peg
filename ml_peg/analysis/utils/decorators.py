@@ -31,11 +31,32 @@ from ml_peg.app.utils.utils import Thresholds
 from ml_peg.models.get_models import get_model_names, load_model_configs
 
 
+def _resolve_lazy(value: Any) -> Any:
+    """
+    Resolve a possibly lazy decorator argument.
+
+    Decorator arguments built from calculation outputs (e.g. hover data from
+    ``get_struct_info``) must be passed as callables so they are only
+    evaluated when the analysis runs, not when the module is imported.
+
+    Parameters
+    ----------
+    value
+        Value, or zero-argument callable returning the value.
+
+    Returns
+    -------
+    Any
+        The value itself, or the result of calling it.
+    """
+    return value() if callable(value) else value
+
+
 def plot_parity(
     title: str | None = None,
     x_label: str | None = None,
     y_label: str | None = None,
-    hoverdata: dict | None = None,
+    hoverdata: dict | Callable[[], dict] | None = None,
     filename: str = "parity.json",
 ) -> Callable:
     """
@@ -50,7 +71,9 @@ def plot_parity(
     y_label
         Label for y-axis. Default is `None`.
     hoverdata
-        Hover data dictionary. Default is `{}`.
+        Hover data dictionary, or a zero-argument callable returning it, so
+        values derived from calculation outputs are only read when the
+        analysis runs. Default is `{}`.
     filename
         Filename to save plot as JSON. Default is "parity.json".
 
@@ -97,11 +120,12 @@ def plot_parity(
 
             hovertemplate = "<b>Pred: </b>%{x}<br>" + "<b>Ref: </b>%{y}<br>"
 
+            hover = _resolve_lazy(hoverdata)
             customdata = []
-            if hoverdata:
-                for i, key in enumerate(hoverdata):
+            if hover:
+                for i, key in enumerate(hover):
                     hovertemplate += f"<b>{key}: </b>%{{customdata[{i}]}}<br>"
-                customdata = list(zip(*hoverdata.values(), strict=True))
+                customdata = list(zip(*hover.values(), strict=True))
 
             fig = go.Figure()
             for mlip, value in results.items():
@@ -447,7 +471,7 @@ def plot_scatter(
     y_label: str | None = None,
     show_line: bool = False,
     show_markers: bool = True,
-    hoverdata: dict | None = None,
+    hoverdata: dict | Callable[[], dict] | None = None,
     filename: str = "scatter.json",
     highlight_range: dict = None,
 ) -> Callable:
@@ -467,7 +491,9 @@ def plot_scatter(
     show_markers
         Whether to show markers on the plot. Default is True.
     hoverdata
-        Hover data dictionary. Default is `{}`.
+        Hover data dictionary, or a zero-argument callable returning it, so
+        values derived from calculation outputs are only read when the
+        analysis runs. Default is `{}`.
     filename
         Filename to save plot as JSON. Default is "scatter.json".
     highlight_range
@@ -514,11 +540,12 @@ def plot_scatter(
             results = func(*args, **kwargs)
 
             hovertemplate = "<b>Pred: </b>%{x}<br>" + "<b>Ref: </b>%{y}<br>"
+            hover = _resolve_lazy(hoverdata)
             customdata = []
-            if hoverdata:
-                for i, key in enumerate(hoverdata):
+            if hover:
+                for i, key in enumerate(hover):
                     hovertemplate += f"<b>{key}: </b>%{{customdata[{i}]}}<br>"
-                customdata = list(zip(*hoverdata.values(), strict=True))
+                customdata = list(zip(*hover.values(), strict=True))
 
             modes = []
             if show_line:
@@ -827,7 +854,7 @@ def plot_density_scatter(
 def plot_periodic_table(
     title: str | None = None,
     colorbar_title: str | None = None,
-    hoverdata: dict[str, dict[str, Any]] | None = None,
+    hoverdata: dict[str, dict[str, Any]] | Callable[[], dict] | None = None,
     filename: str = "periodic_table.json",
     colorscale: str = "Viridis",
     zmin: float | None = None,
@@ -843,7 +870,9 @@ def plot_periodic_table(
     colorbar_title
         Label for the colour bar.
     hoverdata
-        Optional mapping of hover labels to element-wise values.
+        Optional mapping of hover labels to element-wise values, or a
+        zero-argument callable returning it, so values derived from
+        calculation outputs are only read when the analysis runs.
     filename
         Output filename for the JSON figure.
     colorscale
@@ -891,6 +920,7 @@ def plot_periodic_table(
             """
             values = func(*args, **kwargs)
 
+            hover = _resolve_lazy(hoverdata)
             grid = np.full((PERIODIC_TABLE_ROWS, PERIODIC_TABLE_COLS), np.nan)
             hover_grid = np.full_like(grid, "", dtype=object)
             text_grid = np.full_like(grid, "", dtype=object)
@@ -906,8 +936,8 @@ def plot_periodic_table(
                 if value is not None and not np.isnan(value):
                     hover_parts.append(f"Value: {value:.4g}")
 
-                if hoverdata:
-                    for label, mapping in hoverdata.items():
+                if hover:
+                    for label, mapping in hover.items():
                         extra = mapping.get(element)
                         if extra is None:
                             continue

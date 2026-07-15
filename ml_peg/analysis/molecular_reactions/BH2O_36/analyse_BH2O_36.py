@@ -7,6 +7,7 @@ DOI: 10.1021/acs.jctc.3c00176
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 from ase import units
@@ -16,6 +17,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -36,7 +38,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     include_filenames=True,
     write_info=True,
@@ -46,7 +50,17 @@ INFO = get_struct_info(
 )
 
 
-SYSTEM_NAMES = [name.replace("_ts", "") for name in INFO["filenames"]]
+@cache
+def system_names() -> list[str]:
+    """
+    Get system names from calculation output filenames.
+
+    Returns
+    -------
+    list[str]
+        System names for all systems.
+    """
+    return [name.replace("_ts", "") for name in struct_info()["filenames"]]
 
 
 @pytest.fixture
@@ -55,11 +69,11 @@ SYSTEM_NAMES = [name.replace("_ts", "") for name in INFO["filenames"]]
     title="Reaction barriers",
     x_label="Predicted barrier / kcal/mol",
     y_label="Reference barrier / kcal/mol",
-    hoverdata={
-        "System": [n for n in SYSTEM_NAMES for _ in range(2)],
+    hoverdata=lambda: {
+        "System": [n for n in system_names() for _ in range(2)],
         "Barrier Type": [
             barrier_type
-            for _ in SYSTEM_NAMES
+            for _ in system_names()
             for barrier_type in ["TS-Reactants", "TS-Products"]
         ],
     },
@@ -76,9 +90,9 @@ def barrier_heights() -> dict[str, list]:
     results = {"ref": []} | {mlip: [] for mlip in MODELS}
     ref_stored = False
 
-    system_names = SYSTEM_NAMES
+    names = system_names()
     for model_name in MODELS:
-        for system_name in system_names:
+        for system_name in names:
             atoms_rct = read(CALC_PATH / model_name / f"{system_name}_rct.xyz")
             atoms_pro = read(CALC_PATH / model_name / f"{system_name}_pro.xyz")
             atoms_ts = read(CALC_PATH / model_name / f"{system_name}_ts.xyz")
@@ -190,4 +204,6 @@ def test_bh2o_36_barriers(metrics: dict[str, dict]) -> None:
     metrics
         All new benchmark metric names and dictionary of values for each model.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

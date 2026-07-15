@@ -11,6 +11,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -34,7 +35,8 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
 EV_TO_KCAL = units.mol / units.kcal
 
 
-INFO = get_struct_info(
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     index=0,
@@ -59,15 +61,15 @@ INFO = get_struct_info(
     title="PLA15 Protein-Ligand Interaction Energies",
     x_label="Predicted interaction energy / kcal/mol",
     y_label="Reference interaction energy / kcal/mol",
-    hoverdata={
-        "System": INFO["identifier"],
-        "Complex Atoms": INFO["complex_atoms"],
-        "Ligand Atoms": INFO["ligand_atoms"],
-        "Protein Atoms": INFO["protein_atoms"],
-        "Complex Charge": INFO["complex_charges"],
-        "Ligand Charge": INFO["ligand_charges"],
-        "Protein Charge": INFO["protein_charges"],
-        "Interaction Type": INFO["interaction_type"],
+    hoverdata=lambda: {
+        "System": struct_info()["identifier"],
+        "Complex Atoms": struct_info()["complex_atoms"],
+        "Ligand Atoms": struct_info()["ligand_atoms"],
+        "Protein Atoms": struct_info()["protein_atoms"],
+        "Complex Charge": struct_info()["complex_charges"],
+        "Ligand Charge": struct_info()["ligand_charges"],
+        "Protein Charge": struct_info()["protein_charges"],
+        "Interaction Type": struct_info()["interaction_type"],
     },
 )
 def interaction_energies() -> dict[str, list]:
@@ -177,7 +179,9 @@ def pla15_ion_ion_mae(interaction_energies) -> dict[str, float]:
     """
     # Get interaction types for filtering
     ion_ion_indices = [
-        i for i, itype in enumerate(INFO["interaction_type"]) if itype == "ion-ion"
+        i
+        for i, itype in enumerate(struct_info()["interaction_type"])
+        if itype == "ion-ion"
     ]
 
     results = {}
@@ -210,7 +214,9 @@ def pla15_ion_neutral_mae(interaction_energies) -> dict[str, float]:
     """
     # Get interaction types for filtering
     ion_neutral_indices = [
-        i for i, itype in enumerate(INFO["interaction_type"]) if itype == "ion-neutral"
+        i
+        for i, itype in enumerate(struct_info()["interaction_type"])
+        if itype == "ion-neutral"
     ]
 
     results = {}
@@ -278,4 +284,6 @@ def test_pla15(metrics: dict[str, dict]) -> None:
     metrics
         All PLA15 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

@@ -11,6 +11,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -46,7 +47,8 @@ def _sorted_xyz_files(model_dir: Path) -> list[Path]:
     return sorted(model_dir.glob("*.xyz"), key=lambda path: int(path.stem))
 
 
-INFO = get_struct_info(
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     sort_key=lambda path: int(path.stem),
@@ -63,9 +65,9 @@ INFO = get_struct_info(
     title="Wiggle150 Relative Energies",
     x_label="Predicted relative energy / kcal/mol",
     y_label="Reference relative energy / kcal/mol",
-    hoverdata={
-        "Structure": INFO["structure"],
-        "Molecule": INFO["molecule"],
+    hoverdata=lambda: {
+        "Structure": struct_info()["structure"],
+        "Molecule": struct_info()["molecule"],
     },
 )
 def relative_energies() -> dict[str, list[float]]:
@@ -176,4 +178,6 @@ def test_wiggle150(metrics: dict[str, dict]) -> None:
     metrics : dict[str, dict]
         Wiggle150 metric results provided by fixtures.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

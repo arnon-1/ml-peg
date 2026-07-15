@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from ml_peg.analysis.utils.decorators import build_table
-from ml_peg.analysis.utils.utils import get_struct_info, load_metrics_config
+from ml_peg.analysis.utils.utils import deferred, get_struct_info, load_metrics_config
 from ml_peg.app import APP_ROOT
 from ml_peg.calcs import CALCS_ROOT
 from ml_peg.models import current_models
@@ -24,7 +24,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     write_info=True,
@@ -148,4 +150,6 @@ def test_locality(metrics: dict[str, dict]) -> None:
     metrics
         All locality metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

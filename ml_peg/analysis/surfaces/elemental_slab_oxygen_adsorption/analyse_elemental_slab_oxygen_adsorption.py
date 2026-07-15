@@ -10,6 +10,7 @@ import pytest
 
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -28,8 +29,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-# Extract system metadata from mock calculation (filenames)
-SYSTEM_INFO = get_struct_info(
+
+system_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     index="0",
@@ -67,8 +69,8 @@ def compute_adsorption_energy(
     title="Adsorption energies",
     x_label="Predicted adsorption energy / eV",
     y_label="Reference adsorption energy / eV",
-    hoverdata={
-        "System": SYSTEM_INFO["filenames"],
+    hoverdata=lambda: {
+        "System": system_info()["filenames"],
     },
 )
 def adsorption_energies() -> dict[str, list]:
@@ -177,4 +179,6 @@ def test_elemental_slab_oxygen_adsorption(metrics: dict[str, dict]) -> None:
     metrics
         All elemental slab oxygen adsorption metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    system_info()
     return

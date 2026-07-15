@@ -11,6 +11,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -80,7 +81,9 @@ STOICH = {
 
 LABELS = [f"{i}_AB" for i in range(1, 18)] + ["18", "19"]
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     write_info=True,
     write_structs=True,
@@ -188,4 +191,6 @@ def test_ionpi19(metrics: dict[str, dict]) -> None:
     metrics
         All new benchmark metric names and dictionary of values for each model.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 from ase.io import read, write
@@ -10,6 +11,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -27,8 +29,9 @@ OUT_PATH = APP_ROOT / "data" / "surfaces" / "CMRAds200"
 METRICS_CONFIG_PATH = Path(__file__).with_name("metrics.yml")
 DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, _ = load_metrics_config(METRICS_CONFIG_PATH)
 
-# Extract system metadata from mock calculation
-SYSTEM_INFO = get_struct_info(
+
+system_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="mol_surface_structs.extxyz",
     info_keys=["sys_formula"],
@@ -38,7 +41,17 @@ SYSTEM_INFO = get_struct_info(
 )
 
 
-LABELS = SYSTEM_INFO["sys_formula"]
+@cache
+def labels() -> list[str]:
+    """
+    Get system labels for CMRAds200.
+
+    Returns
+    -------
+    list[str]
+        System formulae for all systems.
+    """
+    return system_info()["sys_formula"]
 
 
 @pytest.fixture
@@ -47,8 +60,8 @@ LABELS = SYSTEM_INFO["sys_formula"]
     title="Adsorption energies",
     x_label="Predicted adsorption energy / eV",
     y_label="Reference adsorption energy / eV",
-    hoverdata={
-        "System": SYSTEM_INFO["sys_formula"],
+    hoverdata=lambda: {
+        "System": system_info()["sys_formula"],
     },
 )
 def adsorption_energies() -> dict[str, list]:
@@ -145,4 +158,6 @@ def test_cmrads200(metrics: dict[str, dict]) -> None:
     metrics
         All CMRAds200 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    system_info()
     return

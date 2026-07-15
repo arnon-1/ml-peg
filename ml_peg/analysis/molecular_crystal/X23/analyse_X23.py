@@ -12,6 +12,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -34,7 +35,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
 # Unit conversion
 EV_TO_KJ_PER_MOL = units.mol / units.kJ
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     index="0",
@@ -51,8 +54,8 @@ INFO = get_struct_info(
     title="X23 Lattice Energies",
     x_label="Predicted lattice energy / kJ/mol",
     y_label="Reference lattice energy / kJ/mol",
-    hoverdata={
-        "System": INFO["system"],
+    hoverdata=lambda: {
+        "System": struct_info()["system"],
     },
 )
 def lattice_energies() -> dict[str, list]:
@@ -179,4 +182,6 @@ def test_x23(metrics: dict[str, dict]) -> None:
     metrics
         All X23 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+from functools import cache
 import json
 from pathlib import Path
+from typing import Any
 
 from ase.io import read, write
 import numpy as np
@@ -27,27 +29,46 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
 )
 
 
-INFO = get_struct_info(
-    calc_path=CALC_PATH,
-    glob_pattern="*-traj.extxyz",
-    index="-1",
-    write_info=False,
-    info_keys=["name"],
-    write_structs=False,
-    out_path=OUT_PATH,
-    include_filenames=True,
-)
-# SiC has one traj file but two scatter points (cubic and hexagonal); duplicate entry
-sic_idx = next(i for i, e in enumerate(INFO["elements"]) if set(e) == {"C", "Si"})
-INFO["elements"].insert(sic_idx + 1, INFO["elements"][sic_idx])
+@cache
+def struct_info() -> dict[str, Any]:
+    """
+    Get structure info from calculation outputs, writing app data files.
 
-# Copy names to zip with structure files
-FORMULAE = copy.copy(INFO["name"])
-INFO["name"][sic_idx] = "SiC(a)"
-INFO["name"].insert(sic_idx + 1, "SiC(c)")
-OUT_PATH.mkdir(parents=True, exist_ok=True)
-with (OUT_PATH / "info.json").open("w", encoding="utf8") as f:
-    json.dump(INFO, f, indent=1)
+    Deferred to run time so that missing calculation outputs cannot break
+    pytest collection at import.
+
+    Returns
+    -------
+    dict[str, Any]
+        Structure info for all systems, with SiC duplicated into cubic and
+        hexagonal entries. The pre-duplication names are stored under
+        ``"formulae"`` for zipping with structure files.
+    """
+    info = get_struct_info(
+        calc_path=CALC_PATH,
+        glob_pattern="*-traj.extxyz",
+        index="-1",
+        write_info=False,
+        info_keys=["name"],
+        write_structs=False,
+        out_path=OUT_PATH,
+        include_filenames=True,
+    )
+    # SiC has one traj file but two scatter points (cubic and hexagonal);
+    # duplicate entry
+    sic_idx = next(i for i, e in enumerate(info["elements"]) if set(e) == {"C", "Si"})
+    info["elements"].insert(sic_idx + 1, info["elements"][sic_idx])
+
+    # Copy names to zip with structure files
+    formulae = copy.copy(info["name"])
+    info["name"][sic_idx] = "SiC(a)"
+    info["name"].insert(sic_idx + 1, "SiC(c)")
+    OUT_PATH.mkdir(parents=True, exist_ok=True)
+    with (OUT_PATH / "info.json").open("w", encoding="utf8") as f:
+        json.dump(info, f, indent=1)
+
+    info["formulae"] = formulae
+    return info
 
 
 @pytest.fixture
@@ -56,8 +77,8 @@ with (OUT_PATH / "info.json").open("w", encoding="utf8") as f:
     title="Lattice constants",
     x_label="Predicted lattice constant / Å",
     y_label="Experimental lattice constant / Å",
-    hoverdata={
-        "Formula": INFO["name"],
+    hoverdata=lambda: {
+        "Formula": struct_info()["name"],
     },
 )
 def lattice_constants_exp() -> dict[str, list]:
@@ -69,6 +90,8 @@ def lattice_constants_exp() -> dict[str, list]:
     dict[str, list]
         Dictionary of experimental and predicted lattice energies.
     """
+    info = struct_info()
+
     results = {"ref": []} | {mlip: [] for mlip in MODELS}
     ref_stored = False
 
@@ -76,13 +99,13 @@ def lattice_constants_exp() -> dict[str, list]:
         model_dir = CALC_PATH / model_name
 
         if not model_dir.exists():
-            results[model_name] = [np.nan] * len(INFO["name"])
+            results[model_name] = [np.nan] * len(info["name"])
 
         struct_files = [
-            model_dir / f"{filename}.extxyz" for filename in INFO["filenames"]
+            model_dir / f"{filename}.extxyz" for filename in info["filenames"]
         ]
 
-        for struct_file, name in zip(struct_files, FORMULAE, strict=True):
+        for struct_file, name in zip(struct_files, info["formulae"], strict=True):
             # If file missing, set result to NaN(s) to maintain order
             if not struct_file.is_file():
                 if name == "SiC":
@@ -126,7 +149,7 @@ def lattice_constants_exp() -> dict[str, list]:
 
         if not ref_stored:
             # If some structures missing, reset
-            if len(results["ref"]) == len(INFO["name"]):
+            if len(results["ref"]) == len(info["name"]):
                 ref_stored = True
             else:
                 results["ref"] = []
@@ -140,8 +163,8 @@ def lattice_constants_exp() -> dict[str, list]:
     title="Lattice constants",
     x_label="Predicted lattice constant / Å",
     y_label="DFT lattice constant / Å",
-    hoverdata={
-        "Formula": INFO["name"],
+    hoverdata=lambda: {
+        "Formula": struct_info()["name"],
     },
 )
 def lattice_constants_dft() -> dict[str, list]:
@@ -153,6 +176,8 @@ def lattice_constants_dft() -> dict[str, list]:
     dict[str, list]
         Dictionary of DFT and predicted lattice constants.
     """
+    info = struct_info()
+
     results = {"ref": []} | {mlip: [] for mlip in MODELS}
     ref_stored = False
 
@@ -160,13 +185,13 @@ def lattice_constants_dft() -> dict[str, list]:
         model_dir = CALC_PATH / model_name
 
         if not model_dir.exists():
-            results[model_name] = [np.nan] * len(INFO["name"])
+            results[model_name] = [np.nan] * len(info["name"])
 
         struct_files = [
-            model_dir / f"{filename}.extxyz" for filename in INFO["filenames"]
+            model_dir / f"{filename}.extxyz" for filename in info["filenames"]
         ]
 
-        for struct_file, name in zip(struct_files, FORMULAE, strict=True):
+        for struct_file, name in zip(struct_files, info["formulae"], strict=True):
             # If file missing, set result to NaN(s) to maintain order
             if not struct_file.is_file():
                 if name == "SiC":
@@ -205,7 +230,7 @@ def lattice_constants_dft() -> dict[str, list]:
 
         if not ref_stored:
             # If some structures missing, reset
-            if len(results["ref"]) == len(INFO["name"]):
+            if len(results["ref"]) == len(info["name"]):
                 ref_stored = True
             else:
                 results["ref"] = []
@@ -299,4 +324,6 @@ def test_lattice_constants(metrics: dict[str, dict]) -> None:
     metrics
         All lattice constant metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

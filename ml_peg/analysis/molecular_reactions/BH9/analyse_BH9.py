@@ -16,6 +16,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -36,8 +37,11 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-# Extract system metadata from mock calculation
-SYSTEM_INFO = get_struct_info(
+EV_TO_KCAL = units.mol / units.kcal
+
+
+system_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     include_filenames=True,
@@ -45,8 +49,6 @@ SYSTEM_INFO = get_struct_info(
     write_structs=True,
     out_path=OUT_PATH,
 )
-
-EV_TO_KCAL = units.mol / units.kcal
 
 
 def get_reaction_numbers() -> list[int]:
@@ -58,7 +60,7 @@ def get_reaction_numbers() -> list[int]:
     list[int]
         List of reaction numbers (e.g., [1, 2, 3, ...]).
     """
-    system_names = SYSTEM_INFO["filenames"]
+    system_names = system_info()["filenames"]
     reaction_nums = []
     for name in system_names:
         # Extract reaction number from format like "01_1" -> 1
@@ -77,7 +79,7 @@ def get_structure_numbers() -> list[int]:
     list[int]
         List of structure numbers for each reaction.
     """
-    system_names = SYSTEM_INFO["filenames"]
+    system_names = system_info()["filenames"]
     struct_nums = []
     for name in system_names:
         # Extract structure number from format like "01_1" -> 1
@@ -93,10 +95,10 @@ def get_structure_numbers() -> list[int]:
     title="Reaction barriers",
     x_label="Predicted barrier / kcal/mol",
     y_label="Reference barrier / kcal/mol",
-    hoverdata={
+    hoverdata=lambda: {
         "Reaction": get_reaction_numbers(),
         "Structure": get_structure_numbers(),
-        "System ID": SYSTEM_INFO["filenames"],
+        "System ID": system_info()["filenames"],
     },
 )
 def barrier_heights() -> dict[str, list]:
@@ -111,7 +113,7 @@ def barrier_heights() -> dict[str, list]:
     results = {"ref": []} | {mlip: [] for mlip in MODELS}
     ref_stored = False
 
-    system_names = SYSTEM_INFO["filenames"]
+    system_names = system_info()["filenames"]
     for model_name in MODELS:
         model_barriers = []
         ref_barriers = []
@@ -202,4 +204,6 @@ def test_bh9_barriers(metrics: dict[str, dict]) -> None:
     metrics
         All new benchmark metric names and dictionary of values for each model.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    system_info()
     return

@@ -10,6 +10,7 @@ https://doi.org/10.1038/s41597-022-01529-6
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 from ase import units
@@ -20,6 +21,7 @@ from tqdm import tqdm
 from ml_peg.analysis.utils.decorators import build_table, plot_density_scatter
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -42,7 +44,9 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
     METRICS_CONFIG_PATH
 )
 
-INFO = get_struct_info(
+
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     model_name=next(iter(MODELS)),
     glob_pattern="*_ts.xyz",
@@ -52,7 +56,18 @@ INFO = get_struct_info(
     out_path=OUT_PATH,
 )
 
-LABELS = [filename.removesuffix("_ts") for filename in INFO["filenames"]]
+
+@cache
+def labels() -> list[str]:
+    """
+    Get reaction labels from calculation output filenames.
+
+    Returns
+    -------
+    list[str]
+        Labels for all systems.
+    """
+    return [filename.removesuffix("_ts") for filename in struct_info()["filenames"]]
 
 
 @pytest.fixture
@@ -68,8 +83,10 @@ def barrier_heights() -> dict[str, list]:
     results = {"ref": []} | {mlip: [] for mlip in MODELS}
     ref_stored = False
 
+    system_labels = labels()
+
     for model_name in MODELS:
-        for label in tqdm(LABELS):
+        for label in tqdm(system_labels):
             atoms = read(CALC_PATH / model_name / f"{label}_ts.xyz")
             results[model_name].append(atoms.info["model_forward_barrier"] * EV_TO_KCAL)
             if not ref_stored:
@@ -106,7 +123,7 @@ def barrier_density(barrier_heights: dict[str, list]) -> dict[str, dict]:
         Mapping of model name to density-scatter data.
     """
     ref_vals = barrier_heights["ref"]
-    label_list = LABELS
+    label_list = labels()
     density_inputs: dict[str, dict] = {}
     for model_name in MODELS:
         preds = barrier_heights.get(model_name, [])
@@ -185,4 +202,6 @@ def test_rdb7_barriers(
     barrier_density
         Density scatter inputs for reaction barrier.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

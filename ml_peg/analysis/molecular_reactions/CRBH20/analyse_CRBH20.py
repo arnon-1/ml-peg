@@ -16,6 +16,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -67,7 +68,8 @@ REF_BARRIERS_KCAL = {
     rxn_id: barrier * EV_TO_KCAL for rxn_id, barrier in REF_BARRIERS_EV.items()
 }
 
-INFO = get_struct_info(
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     glob_pattern="*.xyz",
     sort_key=lambda path: int(path.stem.removeprefix("crbh20_")),
@@ -183,5 +185,7 @@ def test_crbh20_analysis(metrics: dict[str, dict]) -> None:
     metrics
         All benchmark metric names and dictionary of values for each model.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     assert metrics is not None
     assert "MAE" in metrics

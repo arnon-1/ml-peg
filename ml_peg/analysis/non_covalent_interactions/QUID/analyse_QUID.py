@@ -9,6 +9,7 @@ Nat Commun 16, 8583 (2025). https://doi.org/10.1038/s41467-025-63587-9
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 from ase import units
@@ -18,6 +19,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -41,15 +43,40 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
 EV_TO_KCAL = units.mol / units.kcal
 
 
-INFO = get_struct_info(
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     include_filenames=True,
     write_info=True,
     write_structs=True,
     out_path=OUT_PATH,
 )
-EQUILIBRIUM_LABELS = [f for f in INFO["filenames"] if "_" not in f]
-DISSOCIATION_LABELS = [f for f in INFO["filenames"] if "_" in f]
+
+
+@cache
+def equilibrium_labels() -> list[str]:
+    """
+    Get labels for equilibrium systems.
+
+    Returns
+    -------
+    list[str]
+        Labels of equilibrium systems.
+    """
+    return [f for f in struct_info()["filenames"] if "_" not in f]
+
+
+@cache
+def dissociation_labels() -> list[str]:
+    """
+    Get labels for dissociation systems.
+
+    Returns
+    -------
+    list[str]
+        Labels of dissociation systems.
+    """
+    return [f for f in struct_info()["filenames"] if "_" in f]
 
 
 @pytest.fixture
@@ -58,7 +85,7 @@ DISSOCIATION_LABELS = [f for f in INFO["filenames"] if "_" in f]
     title="Interaction energies",
     x_label="Predicted energy / kcal/mol",
     y_label="Reference energy / kcal/mol",
-    hoverdata={"Labels": INFO["filenames"]},
+    hoverdata=lambda: {"Labels": struct_info()["filenames"]},
 )
 def interaction_energies() -> dict[str, list]:
     """
@@ -74,7 +101,7 @@ def interaction_energies() -> dict[str, list]:
     ref_stored = False
 
     for model_name in MODELS:
-        for label in INFO["filenames"]:
+        for label in struct_info()["filenames"]:
             atoms = read(CALC_PATH / model_name / f"{label}.xyz", index=0)
 
             if not ref_stored:
@@ -130,7 +157,9 @@ def equilibrium_mae(interaction_energies) -> dict[str, float]:
         Dictionary of predicted interaction energy errors for charged systems.
     """
     equilibrium_indices = [
-        i for i, label in enumerate(INFO["filenames"]) if label in EQUILIBRIUM_LABELS
+        i
+        for i, label in enumerate(struct_info()["filenames"])
+        if label in equilibrium_labels()
     ]
 
     results = {}
@@ -164,7 +193,9 @@ def dissociation_mae(interaction_energies) -> dict[str, float]:
         Dictionary of predicted interaction energy errors for dissociation systems.
     """
     dissociation_indices = [
-        i for i, label in enumerate(INFO["filenames"]) if label in DISSOCIATION_LABELS
+        i
+        for i, label in enumerate(struct_info()["filenames"])
+        if label in dissociation_labels()
     ]
 
     results = {}
@@ -228,4 +259,6 @@ def test_quid(metrics: dict[str, dict]) -> None:
     metrics
         All new benchmark metric names and dictionary of values for each model.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return

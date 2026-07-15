@@ -10,6 +10,7 @@ import pytest
 from ml_peg.analysis.utils.decorators import build_table, plot_parity
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -27,8 +28,9 @@ OUT_PATH = APP_ROOT / "data" / "surfaces" / "S24"
 METRICS_CONFIG_PATH = Path(__file__).with_name("metrics.yml")
 DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, _ = load_metrics_config(METRICS_CONFIG_PATH)
 
-# Extract system metadata from mock calculation
-SYSTEM_INFO = get_struct_info(
+
+system_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     info_keys=["system_name", "sys_id"],
     write_info=True,
@@ -66,9 +68,9 @@ def compute_adsorption_energy(
     title="Adsorption energies",
     x_label="Predicted adsorption energy / eV",
     y_label="Reference adsorption energy / eV",
-    hoverdata={
-        "System": SYSTEM_INFO["system_name"],
-        "Sys ID": SYSTEM_INFO["sys_id"],
+    hoverdata=lambda: {
+        "System": system_info()["system_name"],
+        "Sys ID": system_info()["sys_id"],
     },
 )
 def adsorption_energies() -> dict[str, list]:
@@ -167,4 +169,6 @@ def test_s24(metrics: dict[str, dict]) -> None:
     metrics
         All S24 metrics.
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    system_info()
     return

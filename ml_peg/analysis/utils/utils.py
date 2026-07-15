@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable
+from functools import cache, partial
 import json
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,29 @@ from ml_peg.models.get_models import load_model_configs
 
 MetricRow = dict[str, float | int | str | None]
 TableRow = dict[str, object]
+
+
+def deferred(func: Callable, **kwargs) -> Callable[[], Any]:
+    """
+    Defer a call to run time, caching its result.
+
+    Analyse modules use this to wrap calls that read calculation outputs
+    (e.g. `get_struct_info`), so that missing outputs cannot break pytest
+    collection at import time.
+
+    Parameters
+    ----------
+    func
+        Function to defer.
+    **kwargs
+        Keyword arguments to bind to the call.
+
+    Returns
+    -------
+    Callable[[], Any]
+        Zero-argument callable returning (and caching) `func(**kwargs)`.
+    """
+    return cache(partial(func, **kwargs))
 
 
 def build_dispersion_name_map(

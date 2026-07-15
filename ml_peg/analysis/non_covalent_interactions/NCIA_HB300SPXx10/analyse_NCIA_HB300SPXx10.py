@@ -14,6 +14,7 @@ from ml_peg.analysis.utils.decorators import (
 )
 from ml_peg.analysis.utils.utils import (
     build_dispersion_name_map,
+    deferred,
     get_struct_info,
     load_metrics_config,
     mae,
@@ -37,7 +38,8 @@ DEFAULT_THRESHOLDS, DEFAULT_TOOLTIPS, DEFAULT_WEIGHTS = load_metrics_config(
 )
 
 
-INFO = get_struct_info(
+struct_info = deferred(
+    get_struct_info,
     calc_path=CALC_PATH,
     include_filenames=True,
     write_info=True,
@@ -61,7 +63,7 @@ def interaction_energies() -> dict[str, list]:
     ref_stored = False
 
     for model_name in MODELS:
-        for label in INFO["filenames"]:
+        for label in struct_info()["filenames"]:
             atoms = read(CALC_PATH / model_name / f"{label}.xyz")
             if not ref_stored:
                 results["ref"].append(atoms.info["ref_int_energy"] * EV_TO_KCAL)
@@ -100,7 +102,7 @@ def interaction_density(interaction_energies: dict[str, list]) -> dict[str, dict
         Mapping of model names to density-plot payloads.
     """
     ref_vals = interaction_energies["ref"]
-    label_list = INFO["filenames"]
+    label_list = struct_info()["filenames"]
     density_inputs: dict[str, dict] = {}
     for model_name in MODELS:
         preds = interaction_energies.get(model_name, [])
@@ -183,4 +185,6 @@ def test_ncia_hb300spxx10(
     interaction_density
         Density-scatter inputs for all models (drives saved plots).
     """
+    # get_struct_info must run on every analysis: it writes the app's data files
+    struct_info()
     return
