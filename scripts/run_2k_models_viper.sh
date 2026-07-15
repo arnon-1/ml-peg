@@ -171,7 +171,8 @@ EOF
 # failing for some models is expected and should not abort the task under
 # set -e (nonzero only if the CLI itself fails; ml_peg calc does not
 # propagate pytest's exit code).
-# --no-run-mock: don't add the mock model to the sweep.
+# The mock model rides along as one more (cheap) model: the analysis stage
+# reads outputs/mock at import, and markers + locks make it a one-time cost.
 # test_phonons_ref (slow) scrapes alexandria.icams.rub.de at run time, which
 # batch nodes may not reach; generate the phonon DFT reference on a login node.
 WORKER_LOG_BASE="$RESULTS_BASE/logs/mlpeg/mlpeg_2k_${SLURM_ARRAY_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"
@@ -179,7 +180,7 @@ run_worker() {
     local gpu=$1
     HIP_VISIBLE_DEVICES=$gpu ROCR_VISIBLE_DEVICES=$gpu \
         ml_peg calc --category "$CATEGORY" --test "$TEST" \
-        --run-slow --no-run-mock --models-file "$MODELS_YML" \
+        --run-slow --models-file "$MODELS_YML" \
         --deselect "ml_peg/calcs/bulk_crystal/phonons/calc_phonons.py::test_phonons_ref" \
         -p mlpeg_job_lock \
         > "$WORKER_LOG_BASE.gpu$gpu.log" 2>&1
