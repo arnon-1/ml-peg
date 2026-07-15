@@ -119,6 +119,7 @@ run_worker() {
     ml_peg analyse --category "$CATEGORY" --test "$TEST" \
         --models-file "$MODELS_YML" \
         -p mlpeg_job_lock \
+        --continue-on-collection-errors \
         > "$LOG_BASE.w$i.log" 2>&1
 }
 
@@ -135,4 +136,4 @@ for i in "${!pids[@]}"; do
 done
 
 echo "$(date): analysis job done. Skipped-as-complete benchmarks are normal;"
-echo "grep the worker logs for FAILED to see benchmarks needing attention."
+echo "grep the worker logs for 'FAILED\|ERROR' to see benchmarks needing attention."
