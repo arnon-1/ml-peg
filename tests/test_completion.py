@@ -8,10 +8,12 @@ from pathlib import Path
 
 from pytest import Pytester
 
+import ml_peg.analysis
 import ml_peg.calcs
 from ml_peg.calcs.utils import completion
 
 CALCS_CONFTEST = Path(ml_peg.calcs.__file__).parent / "conftest.py"
+ANALYSIS_CONFTEST = Path(ml_peg.analysis.__file__).parent / "conftest.py"
 
 CALC_FILE = '''
 """Fake benchmark writing one line per model run."""
@@ -120,6 +122,55 @@ def test_fake_yaml(mlip: tuple[str, Any]):
 '''
 
 
+ANALYSIS_FILE = '''
+"""Fake analysis benchmark logging each run."""
+
+from pathlib import Path
+
+HERE = Path(__file__).parent
+CALC_PATH = HERE / "calc_outputs"
+OUT_PATH = HERE / "app_data"
+
+MODELS = {"model-a": None, "model-b": None}
+
+
+def test_analysis():
+    """Pretend to analyse all models."""
+    OUT_PATH.mkdir(parents=True, exist_ok=True)
+    with open(OUT_PATH / "runs.txt", "a") as file:
+        file.write("run\\n")
+'''
+
+FAILING_ANALYSIS_FILE = (
+    ANALYSIS_FILE
+    + """
+    raise ValueError("Analysis failed")
+"""
+)
+
+FLAKY_ANALYSIS_FILE = (
+    ANALYSIS_FILE
+    + """
+    if (HERE / "fail.flag").exists():
+        raise ValueError("Analysis failed")
+"""
+)
+
+DATA_ANALYSIS_FILE = ANALYSIS_FILE.replace(
+    "    OUT_PATH.mkdir(parents=True, exist_ok=True)",
+    """    from ml_peg.calcs.utils import completion
+
+    data_file = HERE / "cache.txt"
+    data_file.write_text("data")
+    completion.record_data_file(data_file)
+    OUT_PATH.mkdir(parents=True, exist_ok=True)""",
+)
+
+NO_CALC_PATH_ANALYSIS_FILE = ANALYSIS_FILE.replace(
+    'CALC_PATH = HERE / "calc_outputs"\n', ""
+)
+
+
 def _runs(pytester: Pytester, model_name: str) -> int:
     """
     Count runs recorded by the fake benchmark for a model.
@@ -205,6 +256,12 @@ def test_marker_roundtrip(tmp_path):
     # Data is treated as changed once the cached file is gone
     data_file.unlink()
     assert not completion.is_complete(out_path, "model", "test_x", "abc")
+
+    # Removing an entry invalidates it; absent entries are a no-op
+    completion.mark_complete(out_path, "model", "test_y", "abc", [])
+    completion.unmark_complete(out_path, "model", "test_y")
+    assert not completion.is_complete(out_path, "model", "test_y", "abc")
+    completion.unmark_complete(out_path, "model", "missing")
 
 
 def test_completed_calcs_skipped(pytester: Pytester):
@@ -405,3 +462,216 @@ def test_failed_calcs_not_marked(pytester: Pytester):
     result.assert_outcomes(failed=1)
     assert _runs(pytester, "model-a") == 2
     assert _runs(pytester, "model-b") == 2
+
+
+def test_analysis_fingerprint_tracks_inputs(tmp_path):
+    """Test analysis fingerprint tracks sources, configs and calc markers."""
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    calc_path = tmp_path / "calc_outputs"
+    (analysis_dir / "analyse_fake.py").write_text("A = 1\n")
+    (analysis_dir / "metrics.yml").write_text("metric: 1\n")
+    configs = {"model-a": {"class_name": "mace"}, "model-b": {}}
+
+    def fingerprint(models=configs, config_map=None):
+        names = list(models)
+        return completion.analysis_fingerprint(
+            analysis_dir, names, calc_path, configs=config_map or models
+        )
+
+    reference = fingerprint()
+    assert fingerprint() == reference
+
+    # Analysis source changed
+    (analysis_dir / "analyse_fake.py").write_text("A = 2\n")
+    changed_source = fingerprint()
+    assert changed_source != reference
+
+    # metrics.yml changed
+    (analysis_dir / "metrics.yml").write_text("metric: 2\n")
+    changed_yaml = fingerprint()
+    assert changed_yaml != changed_source
+
+    # A model's configuration changed
+    changed_config = fingerprint(
+        config_map={"model-a": {"class_name": "orb"}, "model-b": {}}
+    )
+    assert changed_config != changed_yaml
+
+    # A model added
+    assert fingerprint({**configs, "model-c": {}}) != changed_yaml
+
+    # A calc marker appearing, then changing, each change the fingerprint
+    marker = calc_path / "model-a" / completion.MARKER_FILENAME
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}")
+    marker_written = fingerprint()
+    assert marker_written != changed_yaml
+    marker.write_text('{"test": {}}')
+    assert fingerprint() != marker_written
+
+    # MODELS as a dict and as a list of names fingerprint identically
+    assert fingerprint(list(configs), config_map=configs) == fingerprint()
+
+
+def test_analysis_fingerprint_absent_markers_distinct(tmp_path):
+    """Test absent calc markers for different models do not collide."""
+    calc_path = tmp_path / "calc_outputs"
+
+    fingerprint_a = completion.analysis_fingerprint(
+        tmp_path, ["model-a"], calc_path, configs={"model-a": {}}
+    )
+    fingerprint_b = completion.analysis_fingerprint(
+        tmp_path, ["model-b"], calc_path, configs={"model-b": {}}
+    )
+    assert fingerprint_a != fingerprint_b
+
+
+def _analysis_runs(pytester: Pytester) -> int:
+    """
+    Count runs recorded by the fake analysis benchmark.
+
+    Parameters
+    ----------
+    pytester
+        Pytester fixture the fake benchmark ran under.
+
+    Returns
+    -------
+    int
+        Number of recorded runs.
+    """
+    runs_file = pytester.path / "app_data" / "runs.txt"
+    return runs_file.read_text().count("run") if runs_file.exists() else 0
+
+
+def test_completed_analysis_skipped(pytester: Pytester):
+    """Test completed analysis is skipped until its inputs change."""
+    pytester.makeconftest(ANALYSIS_CONFTEST.read_text())
+    pytester.makepyfile(analyse_fake=ANALYSIS_FILE)
+    calc_marker = (
+        pytester.path / "calc_outputs" / "model-a" / completion.MARKER_FILENAME
+    )
+    calc_marker.parent.mkdir(parents=True)
+    calc_marker.write_text("{}")
+
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 1
+
+    marker_file = pytester.path / "app_data" / completion.MARKER_FILENAME
+    assert "test_analysis" in json.loads(marker_file.read_text())
+
+    # Unchanged inputs: analysis is skipped
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(skipped=1)
+    assert _analysis_runs(pytester) == 1
+
+    # Skipping preserves the marker: a still-unchanged third run skips again
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(skipped=1)
+    assert _analysis_runs(pytester) == 1
+
+    # Changed analysis code: re-runs
+    (pytester.path / "analyse_fake.py").write_text(ANALYSIS_FILE + "\n# changed\n")
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 2
+
+    # Changed calc marker (calculation re-ran): analysis re-runs
+    calc_marker.write_text('{"test_calc": {}}')
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 3
+
+    # New metrics.yml next to the analysis script: re-runs, then skips again
+    metrics_file = pytester.path / "metrics.yml"
+    metrics_file.write_text("metric: 1\n")
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 4
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(skipped=1)
+
+    # Changed metrics.yml: re-runs
+    metrics_file.write_text("metric: 2\n")
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 5
+
+    # --force-analysis: re-runs despite a valid marker, and rewrites it; the
+    # stale fingerprint proves the skip below relies on the rewritten marker
+    marker = json.loads(marker_file.read_text())
+    marker["test_analysis"]["fingerprint"] = "stale"
+    marker_file.write_text(json.dumps(marker))
+    result = pytester.runpytest_subprocess("analyse_fake.py", "--force-analysis")
+    result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 6
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(skipped=1)
+
+
+def test_failed_analysis_not_marked(pytester: Pytester):
+    """Test failed analysis is not marked as completed."""
+    pytester.makeconftest(ANALYSIS_CONFTEST.read_text())
+    pytester.makepyfile(analyse_fake=FAILING_ANALYSIS_FILE)
+
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(failed=1)
+    marker_file = pytester.path / "app_data" / completion.MARKER_FILENAME
+    assert not marker_file.exists()
+
+    # A later passing run writes the marker
+    (pytester.path / "analyse_fake.py").write_text(ANALYSIS_FILE)
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    assert "test_analysis" in json.loads(marker_file.read_text())
+
+
+def test_failed_rerun_invalidates_marker(pytester: Pytester):
+    """Test a failed re-run with unchanged inputs does not skip afterwards."""
+    pytester.makeconftest(ANALYSIS_CONFTEST.read_text())
+    pytester.makepyfile(analyse_fake=FLAKY_ANALYSIS_FILE)
+
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+
+    # Force a re-run, with fingerprinted inputs unchanged, that fails partway
+    flag = pytester.path / "fail.flag"
+    flag.write_text("")
+    result = pytester.runpytest_subprocess("analyse_fake.py", "--force-analysis")
+    result.assert_outcomes(failed=1)
+
+    # The earlier success must not mask the failure: the analysis re-runs
+    flag.unlink()
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 3
+
+
+def test_analysis_data_files_tracked(pytester: Pytester):
+    """Test analysis re-runs once a recorded data file is gone from the cache."""
+    pytester.makeconftest(ANALYSIS_CONFTEST.read_text())
+    pytester.makepyfile(analyse_fake=DATA_ANALYSIS_FILE)
+
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(skipped=1)
+
+    (pytester.path / "cache.txt").unlink()
+    result = pytester.runpytest_subprocess("analyse_fake.py")
+    result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 2
+
+
+def test_analysis_without_convention_always_runs(pytester: Pytester):
+    """Test analysis modules missing CALC_PATH always run and keep no marker."""
+    pytester.makeconftest(ANALYSIS_CONFTEST.read_text())
+    pytester.makepyfile(analyse_fake=NO_CALC_PATH_ANALYSIS_FILE)
+
+    for _ in range(2):
+        result = pytester.runpytest_subprocess("analyse_fake.py")
+        result.assert_outcomes(passed=1)
+    assert _analysis_runs(pytester) == 2
+    assert not (pytester.path / "app_data" / completion.MARKER_FILENAME).exists()

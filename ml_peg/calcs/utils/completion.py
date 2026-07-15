@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import hashlib
 import json
 from pathlib import Path
@@ -159,6 +160,58 @@ def calc_fingerprint(
     return sha.hexdigest()
 
 
+def analysis_fingerprint(
+    analysis_dir: Path,
+    model_names: Iterable[str],
+    calc_path: Path,
+    configs: dict[str, dict[str, Any]] | None = None,
+) -> str:
+    """
+    Fingerprint an analysis benchmark's inputs across all models.
+
+    Hashes the Python and YAML sources in the analysis directory, each model's
+    configuration, and the raw bytes of each model's calculation completion
+    marker. Re-running a calculation rewrites its marker, so this invalidates
+    the analysis transitively without hashing the calculation outputs
+    themselves. Local files referenced by model configurations are not hashed
+    either, as the calculation markers already reflect them.
+
+    Parameters
+    ----------
+    analysis_dir
+        Directory containing the benchmark's analysis script(s).
+    model_names
+        Names of the models the analysis aggregates.
+    calc_path
+        Benchmark calculation outputs directory, containing per-model
+        completion markers.
+    configs
+        Model configurations by name. Default is each model's entry in the
+        models file.
+
+    Returns
+    -------
+    str
+        Hex digest identifying the analysis' inputs.
+    """
+    sha = hashlib.sha256()
+    for source in sorted(
+        [*Path(analysis_dir).glob("*.py"), *Path(analysis_dir).glob("*.yml")]
+    ):
+        sha.update(source.name.encode())
+        sha.update(source.read_bytes())
+    for name in sorted(model_names):
+        config = _model_config(name) if configs is None else configs.get(name, {})
+        sha.update(name.encode())
+        sha.update(json.dumps(config, sort_keys=True, default=str).encode())
+        marker = Path(calc_path) / name / MARKER_FILENAME
+        if marker.is_file():
+            sha.update(marker.read_bytes())
+        else:
+            sha.update(f"absent:{name}".encode())
+    return sha.hexdigest()
+
+
 def _read_marker(marker: Path) -> dict[str, Any]:
     """
     Read a completion marker file.
@@ -238,4 +291,28 @@ def mark_complete(
     marker.parent.mkdir(parents=True, exist_ok=True)
     content = _read_marker(marker)
     content[test_name] = {"fingerprint": fingerprint, "data_files": list(data_files)}
+    marker.write_text(json.dumps(content, indent=2, sort_keys=True), encoding="utf8")
+
+
+def unmark_complete(out_path: Path, model_name: str, test_name: str) -> None:
+    """
+    Remove a test's completion marker entry, if present.
+
+    Called before a test re-runs, so that a failed or interrupted run cannot
+    leave outputs masked as complete by an earlier success.
+
+    Parameters
+    ----------
+    out_path
+        Benchmark outputs directory.
+    model_name
+        Name of the model the calculation ran with.
+    test_name
+        Name of the test to remove the marker entry for.
+    """
+    marker = out_path / model_name / MARKER_FILENAME
+    content = _read_marker(marker)
+    if test_name not in content:
+        return
+    del content[test_name]
     marker.write_text(json.dumps(content, indent=2, sort_keys=True), encoding="utf8")
